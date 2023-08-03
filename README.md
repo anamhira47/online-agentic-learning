@@ -37,6 +37,47 @@ TODO:
 
 
 
+## Setting Up the Environment
+
+Before you can run the code, you'll need to set up a Python environment. We recommend using [Conda](https://docs.conda.io/en/latest/), which is a package manager that works well for managing Python environments and packages.
+
+Here are the steps to create a new Conda environment and install PyTorch:
+
+1. **Install Conda**
+
+   If you haven't installed Conda yet, you can download it from the [official website](https://docs.conda.io/en/latest/miniconda.html). Choose the Python 3 version.
+
+2. **Create a new Conda environment**
+
+   Open a terminal and run the following command to create a new Conda environment named `myenv`:
+
+
+   ```bash
+   conda create --name myenv
+   ```
+
+   You can replace `myenv` with any name you like.
+
+3. **Activate the Conda environment**
+
+   Use the following command to activate the environment:
+
+   ```
+   conda activate myenv
+   ```
+
+
+
+
+4. **Install PyTorch**
+
+   You can install PyTorch in your Conda environment with the following command:
+
+```
+conda install pytorch torchvision torchaudio -c pytorch```
+
+
+
 # Building on the shoulders of giants :)
 
 Inspirations:
