@@ -29,7 +29,7 @@ jsonformer = Jsonformer(model, tokenizer, json_schema, prompt)
 generated_data = jsonformer()
 '''
 #print(generated_data)
-
+'''
 ecomm = {
     "type": "object",
     "properties": {
@@ -58,6 +58,8 @@ ecomm = {
         }
     },
 }
+'''
+
 example_schema = {
     "type": "object",
     "properties": {
