@@ -74,7 +74,8 @@ Here are the steps to create a new Conda environment and install PyTorch:
    You can install PyTorch in your Conda environment with the following command:
 
 ```
-conda install pytorch torchvision torchaudio -c pytorch```
+conda install pytorch torchvision torchaudio -c pytorch
+```
 
 
 
