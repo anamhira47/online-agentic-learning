@@ -20,7 +20,6 @@ class ConstrainedGeneration:
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizer,
         json_schema: Dict[str, Any],
-        prompt: str,
         *,
         debug: bool = False,
         max_array_length: int = 10,
@@ -31,9 +30,10 @@ class ConstrainedGeneration:
         self.model = model
         self.tokenizer = tokenizer
         self.json_schema = json_schema
-        self.prompt = prompt
-
-        self.number_logit_processor = OutputNumbersTokens(self.tokenizer, self.prompt)
+        # utilize during the call instread 
+        #self.prompt = prompt
+        #TODO moved this to the call for now but maybe we can move it back
+        #self.number_logit_processor = OutputNumbersTokens(self.tokenizer, self.prompt)
 
         self.generation_marker = "|GENERATION|"
         self.debug_on = debug
@@ -237,9 +237,12 @@ class ConstrainedGeneration:
 
         return prompt
 
-    def __call__(self) -> Dict[str, Any]:
+    def __call__(self, prompt:str) -> Dict[str, Any]:
         self.value = {}
+        self.prompt = prompt
+        self.number_logit_processor = OutputNumbersTokens(self.tokenizer, self.prompt)
         generated_data = self.generate_object(
             self.json_schema["properties"], self.value
         )
         return generated_data
+    

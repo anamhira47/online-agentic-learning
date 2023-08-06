@@ -1,2 +1,2 @@
-from constrainedGen.main import ConstrainedGeneration
+from constrainedGen.constrainedGeneration import ConstrainedGeneration
 from constrainedGen.format import highlight_values

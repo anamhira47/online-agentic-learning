@@ -199,7 +199,7 @@ class Framework:
 
         return model, tokenizer
 
-
+    # normal forward pass
     def forward(self, input_ids, option_len=None, generation=False):
         """
         Given input_ids and the length of the option, return the log-likelihood of each token in the option.
@@ -401,7 +401,7 @@ class Framework:
             collator = NondiffCollator
         else:
             collator = DataCollatorForTokenClassification
-
+        # FROM TRAINER .PY
         trainer = OurTrainer(
             model=self.model, 
             args=self.args,
