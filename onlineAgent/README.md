@@ -20,3 +20,17 @@ agent.generate(prompt)
 agent.feedback(feedback)
 
 
+Current Optimization debt
+
+- Better method for constrained generation using SMC sampling and pushdown automata
+- Speculative sampling for quicker inference generation
+- RoPe scaling
+- Overall better inference setup practices (huggingface side)
+
+Some Ideas to explore
+
+- Distributed learning paradigm
+    - m_1,...m_n small nodes with larger LLM for fwd pass learning (memory time tradeoff)
+
+    
+
