@@ -27,12 +27,18 @@ class OurArguments(TrainingArguments):
     '''
     Our custom arguments for the trainer
     '''
-    task_name: str = ""
+    task_name: str = "WIC"
     # number of examples
 
-
+     # Model loading
+    model_name: str = "meta-llama/Llama-2-7b-hf" # HuggingFace model name
+    load_float16: bool = True # load model parameters as float16
+    load_bfloat16: bool = False # load model parameters as bfloat16
+    load_int8: bool = False # load model parameters as int8
+    max_length: int = 2048 # max length the model can take
+    no_auto_device: bool = False # do not load model by auto device; should turn this on when using FSDP
     #model loading -> need ot offlad this sumewhere
-
+    trainer: str = "zo"
     # calibration sfc i dont think we can use this for non differentialble
 
 
@@ -71,6 +77,7 @@ class OurArguments(TrainingArguments):
 
     # auto saving when interrupted
     save_on_interrupt: bool = False
+    output_dir: str = "output"
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -91,7 +98,8 @@ class Framework:
         with count_time("Load model wtih wtih HF"):
             free_in_gb = int(torch.cuda.mem_get_info()[0]/1024**3)
             config = AutoConfig.from_pretrained(self.args.model_name)
-            if self.args.unti_emb:
+            logger.info(f"Model config: {config}")
+            if self.args.untie_emb:
                 logger.warm("Untying embedding and lm_head weights")
                 config.tie_word_embeddings = False
             elif self.args.no_auto_device:
@@ -113,7 +121,8 @@ class Framework:
                     config=config)
             model.eval()
         # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(self.args.model_name, use_fast=False)
+        tokenizer = AutoTokenizer.from_pretrained(self.args.model_name, )
+        logger.info(f"Vocab size: {len(tokenizer)}")
         # add padding token for llamav2
          # add padding token for llamav2 
         if 'llama' in self.args.model_name:
@@ -171,5 +180,120 @@ class Framework:
         Return the prediction on eval sample 
         '''
         pass
+    #
 
-    def train_single_sample(
+    def train(self, train_samples, eval_samples):
+        """
+        Training function
+        """
+        # Set tokenizer to left padding (so that all the options are right aligned)
+        self.tokenizer.padding_side = "left"
+
+        class HFDataset(Dataset):
+
+            def __init__(self, data):
+                self.data = data
+
+            def __len__(self):
+                return len(self.data)
+
+            def __getitem__(self, idx):
+                return self.data[idx]
+
+
+        def _convert(samples):
+            """
+            Convert samples to HF-compatible dataset
+            """
+            data = []
+            for sample in samples:
+                encoded_candidates, option_lens = encode_prompt(
+                    self.task, self.task.get_template(), [], sample, self.tokenizer, 
+                    max_length=self.args.max_length, generation=self.task.generation, generation_with_gold=True, 
+                    max_new_tokens=self.args.max_new_tokens
+                )
+                if self.task.generation:
+                    correct_candidate_id = 0
+                elif isinstance(sample.correct_candidate, list):
+                    correct_candidate_id = sample.candidates.index(sample.correct_candidate[0])
+                else:
+                    #TODO un random this for actual usage :skull:
+                    #correct_candidate_id = sample.candidates.index(sample.correct_candidate)
+                    correct_candidate_id = random.randint(0, 1)
+                    
+
+                
+                if self.args.non_diff:
+                    # For non-differentiable objective, there is no teacher forcing thus the 
+                    # current answer part is removed
+                    encoded_candidates[correct_candidate_id] = encoded_candidates[correct_candidate_id][:-option_lens[correct_candidate_id]]
+
+                if self.args.train_as_classification:
+                    # For classification, we provide the label as the correct candidate id
+                    data.append([{"input_ids": encoded_candidates[_i], "labels": correct_candidate_id, "option_len": option_lens[_i], "num_options": len(sample.candidates)} for _i in range(len(encoded_candidates))])
+                elif self.args.only_train_option:
+                    # Otherwise, it is just LM-style teacher forcing
+                    if self.args.non_diff:
+                        # For non-differentiable objective, we need to provide the gold answer to calculate F1/acc
+                        data.append({"input_ids": encoded_candidates[correct_candidate_id], "labels": encoded_candidates[correct_candidate_id], "option_len": option_lens[correct_candidate_id], "gold": sample.correct_candidate})
+                    else:
+                        data.append({"input_ids": encoded_candidates[correct_candidate_id], "labels": encoded_candidates[correct_candidate_id], "option_len": option_lens[correct_candidate_id]})
+                else:
+                    data.append({"input_ids": encoded_candidates[correct_candidate_id], "labels": encoded_candidates[correct_candidate_id]})
+            return data
+
+        with count_time("Tokenizing training samples"):
+            train_dataset = HFDataset(_convert(train_samples))
+            eval_dataset = HFDataset(_convert(eval_samples))
+        
+        if self.args.only_train_option and not self.args.non_diff:
+            # If --only_train_option and not with a non-differentiable objective, we wrap the forward function
+            self.model.original_forward = self.model.forward
+            self.model.forward = forward_wrap_with_option_len.__get__(self.model, type(self.model))
+
+        if self.args.non_diff:
+            collator = NondiffCollator
+        else:
+            collator = DataCollatorForTokenClassification
+        # FROM TRAINER .PY
+        trainer = OurTrainer(
+            model=self.model, 
+            args=self.args,
+            train_dataset=train_dataset, 
+            eval_dataset=eval_dataset,
+            tokenizer=self.tokenizer,
+            data_collator=DataCollatorWithPaddingAndNesting(self.tokenizer, pad_to_multiple_of=8) if self.args.train_as_classification else collator(self.tokenizer, pad_to_multiple_of=8),
+        )
+        if self.args.save_on_interrupt:
+            trainer.add_callback(SIGUSR1Callback())
+
+        # Resume training from a last checkpoint
+        last_checkpoint = None
+        from transformers.trainer_utils import get_last_checkpoint
+        if os.path.isdir(self.args.output_dir) and not self.args.overwrite_output_dir:
+            last_checkpoint = get_last_checkpoint(self.args.output_dir)
+        if last_checkpoint is not None and self.args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+        if self.args.resume_from_checkpoint is not None:
+            last_checkpoint = self.args.resume_from_checkpoint
+
+        trainer.train(resume_from_checkpoint=last_checkpoint) 
+
+        # Explicitly save the model
+        if self.args.save_model:
+            logger.warn("Save model..")
+            trainer.save_model()
+        
+        # FSDP compatibility
+        self.model = trainer.model 
+        
+        # Reset the forward function for evaluation
+        if self.args.only_train_option and not self.args.non_diff:
+            if type(self.model) == FSDP:
+                logger.info("This is an FSDP model now. Be careful when assigning back the original forward function")
+                self.model._fsdp_wrapped_module.forward = self.model._fsdp_wrapped_module.original_forward
+            else:
+                self.model.forward = self.model.original_forward

@@ -1,7 +1,8 @@
 from constrainedGen import ConstrainedGeneration
 from transformers import LlamaForCausalLM, LlamaTokenizer
 import torch
-from onlineAgent import run
+from onlineAgent import feedback
+
 class Online:
     def __init__(self, json_schema, model_name):
         # json schema to constrain generation to 
@@ -74,6 +75,7 @@ class Online:
             8. Repeat
 
             '''
+            feedback.train(self.curr_output, feedback)
             
             
 
