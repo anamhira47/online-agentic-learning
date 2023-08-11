@@ -38,7 +38,7 @@ class OurArguments(TrainingArguments):
     result_file: str = None # file name for saving performance; if None, then use the task name, model name, and config
 
     # Model loading
-    model_name: str = "facebook/opt-125m" # HuggingFace model name
+    model_name: str = "meta-llama/Llama-2-7b-hf" # HuggingFace model name
     load_float16: bool = False # load model parameters as float16
     load_bfloat16: bool = False # load model parameters as bfloat16
     load_int8: bool = False # load model parameters as int8

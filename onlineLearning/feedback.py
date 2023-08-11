@@ -24,60 +24,89 @@ import random
 
 @dataclass
 class OurArguments(TrainingArguments):
-    '''
-    Our custom arguments for the trainer
-    '''
-    task_name: str = "WIC"
-    # number of examples
+    # dataset and sampling strategy
+    task_name: str = "WIC" # task name should match the string before Dataset in the Dataset class name. We support the following task_name: SST2, RTE, CB, BoolQ, WSC, WIC, MultiRC, Copa, ReCoRD, SQuAD, DROP
+    mode: str = "ft" # train, eval, test, or interactive
+    # Number of examples
+    num_train: int = 0 # ICL mode: number of demonstrations; training mode: number of training samples
+    num_dev: int = None # (only enabled with training) number of development samples
+    num_eval: int = None # number of evaluation samples
+    num_train_sets: int = None # how many sets of training samples/demos to sample; if None and train_set_seed is None, then we will sample one set for each evaluation sample
+    train_set_seed: int = None # designated seed to sample training samples/demos
+    result_file: str = None # file name for saving performance; if None, then use the task name, model name, and config
 
-     # Model loading
+    # Model loading
     model_name: str = "meta-llama/Llama-2-7b-hf" # HuggingFace model name
-    load_float16: bool = True # load model parameters as float16
+    load_float16: bool = False # load model parameters as float16
     load_bfloat16: bool = False # load model parameters as bfloat16
     load_int8: bool = False # load model parameters as int8
-    max_length: int = 2048 # max length the model can take
+    max_length: int = 4096 # max length the model can take
     no_auto_device: bool = False # do not load model by auto device; should turn this on when using FSDP
-    #model loading -> need ot offlad this sumewhere
-    trainer: str = "zo"
-    # calibration sfc i dont think we can use this for non differentialble
 
+    # Calibration
+    sfc: bool = False # whether to use SFC calibration
+    icl_sfc: bool = False # whether to use SFC calibration for ICL samples
+    tag: str = "online" # tag for saving the calibration file
+    # Training
+    trainer: str = "zo" 
+    ## options
+    ## - none: no training -- for zero-shot or in-context learning (ICL)
+    ## - regular: regular huggingface trainer -- for fine-tuning
+    ## - zo: zeroth-order (MeZO) training
+    only_train_option: bool = True # whether to only train the option part of the input
+    train_as_classification: bool = False # take the log likelihood of all options and train as classification 
 
+    # MeZO random perturbation epsilon
     zo_eps: float = 1e-3 # eps in MeZO
-    num_prefix: int = 0 # number of prefix tokens to use for MeZO
-    
 
-    # lora
-    lora: bool = False # whether to use lora
-    lora_alpha: int = 16
-    lora_r: int = 8
+    # Prefix tuning
+    prefix_tuning: bool = False # whether to use prefix tuning
+    num_prefix: int = 5 # number of prefixes to use
+    no_reparam: bool = True # do not use reparameterization trick
+    prefix_init_by_real_act: bool = True # initialize prefix by real activations of random words
 
-    #generation
-    sampling: bool = False # whether to use samplign
-    temperature: float = 1.0 # temperature for sampling
-    num_beams: int = 1 # number of beams for beam search
-    top_k: int = None # top k for top k sampling
+    # LoRA
+    lora: bool = False # whether to use LoRA
+    lora_alpha: int = 16 # alpha in LoRA
+    lora_r: int = 8 # r in LoRA
+
+    # Generation
+    sampling: bool = False # whether to use sampling
+    temperature: float = 1.0 # temperature for generation
+    num_beams: int = 1 # number of beams for generation
+    top_k: int = None # top-k for generation
     top_p: float = 0.95 # top-p for generation
     max_new_tokens: int = 50 # max number of new tokens to generate
-    eos_token: str = "\n" # end of stentence token
+    eos_token: str = "\n" # end of sentence token
 
-    # saving
-    save_model: bool = False #whether to save the model
-    no_eval: bool = False # whether to evaluate on the validation set
-    tag: str = "" # tag for saving the model
+    # Saving
+    save_model: bool = False # whether to save the model
+    no_eval: bool = False # whether to skip evaluation
+    tag: str = "" # saving tag
+
     # Linear probing
-    linear_probe: bool = False # whether to do linear probing
-    lp_early_stopping: bool = False # whether to do early stopping for linear probing
-    #untie emb/lm_head weights
-    untie_emb: bool = False
+    linear_probing: bool = False # whether to do linear probing
+    lp_early_stopping: bool = False # whether to do early stopping in linear probing
+    head_tuning: bool = False # head tuning: only tune the LM head
 
-    # display
-    verbos:bool = False
-    #non-differentiable
-    non_diff: bool = False
+    # Untie emb/lm_head weights
+    untie_emb: bool = False # untie the embeddings and LM head
 
-    # auto saving when interrupted
-    save_on_interrupt: bool = False
-    output_dir: str = "output"
+    # Display
+    verbose: bool = False # verbose output
+
+    # Non-diff objective
+    non_diff: bool = False # use non-differentiable objective (only support F1 for SQuAD for now)
+
+    # Auto saving when interrupted
+    save_on_interrupt: bool = False # save model when interrupted (useful for long training)
+    output_dir: str = "result" # output directory
+
+    # extra 
+    learning_rate: float = -1e-5
+    lr_scheduler_type: str = "constant"
+    
+
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -87,55 +116,88 @@ def set_seed(seed: int):
 
 class Framework:
 
+ 
+
     def __init__(self, args, task):
         self.args = args
-        self.task = task 
+        self.task = task
         self.model, self.tokenizer = self.load_model()
 
-
+    # loads huggingface model w/ huggingface format
     def load_model(self):
-
-        with count_time("Load model wtih wtih HF"):
-            free_in_gb = int(torch.cuda.mem_get_info()[0]/1024**3)
+        """
+        Load HuggingFace models
+        """
+        with count_time("Loading model with FP%d" % (16 if self.args.load_float16 else 32)):
+            free_in_GB = int(torch.cuda.mem_get_info()[0]/1024**3)
             config = AutoConfig.from_pretrained(self.args.model_name)
-            logger.info(f"Model config: {config}")
             if self.args.untie_emb:
-                logger.warm("Untying embedding and lm_head weights")
+                # Untie embeddings/LM head
+                logger.warn("Untie embeddings and LM head")
                 config.tie_word_embeddings = False
+            if self.args.head_tuning:
+                # Head tuning
+                from ht_opt import OPTForCausalLM
+                model = OPTForCausalLM.from_pretrained(
+                    self.args.model_name,
+                    config=config,
+                )
             elif self.args.no_auto_device:
-                # no auto device for FSDP
+                # No auto device (use for FSDP)
                 model = AutoModelForCausalLM.from_pretrained(
                     self.args.model_name,
-                    config=config
+                    config=config,
                 )
-
             else:
-                    # Auto device loading
+                # Auto device loading
                 torch_dtype = torch.float32
                 if self.args.load_float16:
                     torch_dtype = torch.float16
                 elif self.args.load_bfloat16:
                     torch_dtype = torch.bfloat16
+                print(self.args.model_name)
+                print(config)
                 model = AutoModelForCausalLM.from_pretrained(
                     self.args.model_name,
-                    config=config)
+                    config=config,
+                    device_map='auto',
+                    torch_dtype=torch_dtype,
+                    max_memory={i: f'{free_in_GB-5}GB' for i in range(torch.cuda.device_count())},
+                    load_in_8bit=self.args.load_int8,
+                    offload_folder='save_folder'
+                )
             model.eval()
+
         # Load tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(self.args.model_name, )
-        logger.info(f"Vocab size: {len(tokenizer)}")
-        # add padding token for llamav2
-         # add padding token for llamav2 
+        tokenizer = AutoTokenizer.from_pretrained(self.args.model_name, use_fast=False)
+        # add padding token for llamav2 
         if 'llama' in self.args.model_name:
             tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-            # rewsize tokenizer embeddings length
             model.resize_token_embeddings(len(tokenizer))
-        # lora
+        # HF tokenizer bug fix
+        if "opt" in self.args.model_name:
+            tokenizer.bos_token_id = 0
+
+        # Prefix tuning/LoRA
+        if self.args.prefix_tuning:
+            from prefix import PrefixTuning
+            PrefixTuning(model, num_prefix=self.args.num_prefix, reparam=not self.args.no_reparam, float16=self.args.load_float16, init_by_real_act=self.args.prefix_init_by_real_act)
         if self.args.lora:
             from lora import LoRA
             LoRA(model, r=self.args.lora_r, alpha=self.args.lora_alpha, float16=self.args.load_float16)
 
+        if self.args.head_tuning:
+            if model.config.model_type == "opt":
+                head_name = "lm_head" if self.args.untie_emb else "embed_tokens"
+            else:
+                raise NotImplementedError
+            for n, p in model.named_parameters():
+                if head_name not in n:
+                    p.requires_grad = False
+                else:
+                    logger.info(f"Only tuning {n}")
+
         return model, tokenizer
-    
 
     # normal forward pass < need to make it so we have feedback model plus normal model w/ hotswapping weights>
 
@@ -163,7 +225,7 @@ class Framework:
             return output_text
         else:
             with torch.inference_mode():
-                self.mode.eval()
+                self.model.eval()
                 # get probablity distribution
                 logits = self.model(input_ids=input_ids).logits
             labels = input_ids[0,1:]
