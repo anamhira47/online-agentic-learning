@@ -331,6 +331,135 @@ class Framework:
         metrics = {metric_name: calculate_metric(predictions, metric_name)}
         return metrics
 
+    # code to train a single sample for forward pass
+    def train_single_sample(self, generated_text, correct_text):
+        '''
+        Feedback function for single sample
+        '''
+        self.tokenizer.padding_side = 'left'
+        '''
+        set some of the arguments for the trainer
+        '''
+        
+        class HFDataset(Dataset):
+            def __init__(self, data):
+                self.data = data
+            
+            def __len__(self):
+                return len(self.data)
+            
+            def __getitem__(self, idx):
+                return self.data[idx]
+
+        def _convert(sample):
+            '''
+            Convert the sample to HF-compatible dataset
+            '''
+            data = []
+            encoded_candidates, option_lens = encode_prompt(
+                self.task, self.task.get_template(), [], sample, self.tokenizer,
+                max_length=self.args.max_length, generation=self.task.generation,
+                generation_with_gold=True, max_new_tokens=self.args.max_new_tokens)
+            if self.task.generation:
+                correct_candidate_id = 0
+            elif isinstance(sample.correct_candidate, list):
+                correct_candidate_id = sample.candidates.index(sample.correct_candidate[0])
+            else:
+                correct_candidate_id = sample.candidates.index(sample.correct_candidate)
+            
+            if self.args.non_diff:
+                # For non-differentiable objective, there is no teacher forcing thus the 
+                # current answer part is removed
+                encoded_candidates[correct_candidate_id] = encoded_candidates[correct_candidate_id][:-option_lens[correct_candidate_id]]
+
+            if self.args.train_as_classification:
+                # For classification, we provide the label as the correct candidate id
+                data.append([{"input_ids": encoded_candidates[_i], "labels": correct_candidate_id, "option_len": option_lens[_i], "num_options": len(sample.candidates)} for _i in range(len(encoded_candidates))])
+            elif self.args.only_train_option:
+                # Otherwise, it is just LM-style teacher forcing
+                if self.args.non_diff:
+                    # For non-differentiable objective, we need to provide the gold answer to calculate F1/acc
+                    data.append({"input_ids": encoded_candidates[correct_candidate_id], "labels": encoded_candidates[correct_candidate_id], "option_len": option_lens[correct_candidate_id], "gold": sample.correct_candidate})
+                else:
+                    data.append({"input_ids": encoded_candidates[correct_candidate_id], "labels": encoded_candidates[correct_candidate_id], "option_len": option_lens[correct_candidate_id]})
+            else:
+                data.append({"input_ids": encoded_candidates[correct_candidate_id], "labels": encoded_candidates[correct_candidate_id]})
+            return data
+
+        with count_time("Tokenizing training sample"):
+            train_dataset = HFDataset(_convert(generated_text))
+            eval_dataset = HFDataset(_convert(correct_text))
+
+        if self.args.only_train_option and not self.args.non_diff:
+            # for differentiable objective, we wrap the forward function
+            # not useful for single training agentic case
+            self.model.original_forward = self.model.forward
+            self.model.forward = forward_wrap_with_option_len.__get__(self.model, type(self.model))
+        if self.args.non_diff:
+            collator = NondiffCollator
+        else: # normal collator
+            collator = DataCollatorForTokenClassification
+        
+        # FROM TRAINER .PY
+        # maybe change the eval to last k demonstrations
+        trainer = OurTrainer(
+            model=self.model,
+            args=self.args,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            tokenizer=self.tokenizer,
+            data_collator=DataCollatorWithPaddingAndNesting(self.tokenizer, pad_to_multiple_of=8) if self.args.train_as_classification else collator(self.tokenizer, pad_to_multiple_of=8),
+
+        )
+        #save if interrupted
+        # gonna need to make this code mroe streamlined tbh doesnt make sense for such complexity in this method
+        if self.args.save_on_interrupt:
+            trainer.add_callback(SIGUSR1Callback())
+        last_checkpoint = None
+        from transformers.trainer_utils import get_last_checkpoint
+        if os.path.isdir(self.args.output_dir) and not self.args.overwrite_output_dir:
+            last_checkpoint = get_last_checkpoint(self.args.output_dir)
+        if last_checkpoint is not None and self.args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+        if self.args.resume_from_checkpoint is not None:
+            last_checkpoint = self.args.resume_from_checkpoint
+        trainer.train(resume_from_checkpoint=last_checkpoint)
+
+        # Explicitly save the model
+        if self.args.save_model:
+            logger.warn("Save model..")
+            trainer.save_model()
+        
+        # FSDP compatibility
+        self.model = trainer.model 
+        
+        # Reset the forward function for evaluation
+        if self.args.only_train_option and not self.args.non_diff:
+            if type(self.model) == FSDP:
+                logger.info("This is an FSDP model now. Be careful when assigning back the original forward function")
+                self.model._fsdp_wrapped_module.forward = self.model._fsdp_wrapped_module.original_forward
+            else:
+                self.model.forward = self.model.original_forward
+            
+
+
+
+
+        
+
+
+            
+
+
+
+
+
+
+
+
 
     def train(self, train_samples, eval_samples):
         """
@@ -443,6 +572,7 @@ class Framework:
                 self.model._fsdp_wrapped_module.forward = self.model._fsdp_wrapped_module.original_forward
             else:
                 self.model.forward = self.model.original_forward
+                
 
 
 def result_file_tag(args):
