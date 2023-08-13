@@ -246,6 +246,7 @@ class WICDataset(Dataset):
     
     def __init__(self, subtask=None, **kwargs) -> None:
         self.load_dataset(subtask, **kwargs)
+        
     
     def load_dataset(self, path, **kwargs):
         d = load_dataset("super_glue", "wic")

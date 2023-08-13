@@ -221,6 +221,7 @@ class WICTemplate(Template):
     verbalizer = {0: "No", 1: "Yes"}
 
     def encode(self, sample):
+        print(sample)
         sent1 = sample.data["sentence1"]
         sent2 = sample.data["sentence2"]
         word = sample.data["word"]

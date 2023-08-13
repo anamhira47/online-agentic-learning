@@ -171,7 +171,32 @@ def encode_prompt(task, template, train_samples, eval_sample, tokenizer, max_len
    
     return encodings, option_lens
  
+def encode_samples(template, samples, tokenizer, max_length):
+    """
+    Encode samples for running a forward pass.
+    Input: 
+    - template: template class
+    - samples: the actual samples
+    - tokenizer: tokenizer
+    - max_length: max length
+    Output:
+    - encodings: a list of N lists of tokens. N is the number of options for classification/multiple-choice.
+    """
 
+    # We generate one prompt for each candidate (different classes in classification)
+    # or different choices in multiple-choice tasks
+    prompts = [template.encode(sample).strip(' ') for sample in samples]
+    prompt_lengths = [len(tokenizer.encode(prompt)) for prompt in prompts]
+
+    # Tokenize 
+    encodings = [tokenizer.encode(prompt) for prompt in prompts]
+
+    # Truncate if necessary
+    if any([length > max_length for length in prompt_lengths]):
+        logger.warn("Exceed max length")
+        encodings = [encoding[-max_length:] for encoding in encodings]  
+
+    return encodings
 
 @dataclass
 class ICLCollator:

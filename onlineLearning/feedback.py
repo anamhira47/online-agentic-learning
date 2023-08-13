@@ -24,53 +24,96 @@ import random
 
 @dataclass
 class OurArguments(TrainingArguments):
-    '''
-    Our custom arguments for the trainer
-    '''
-    task_name: str = ""
-    # number of examples
+    # dataset and sampling strategy
+    task_name: str = "WIC" # task name should match the string before Dataset in the Dataset class name. We support the following task_name: SST2, RTE, CB, BoolQ, WSC, WIC, MultiRC, Copa, ReCoRD, SQuAD, DROP
+    mode: str = "ft" # train, eval, test, or interactive
+    # Number of examples
+    num_train: int = 0 # ICL mode: number of demonstrations; training mode: number of training samples
+    num_dev: int = None # (only enabled with training) number of development samples
+    num_eval: int = None # number of evaluation samples
+    num_train_sets: int = None # how many sets of training samples/demos to sample; if None and train_set_seed is None, then we will sample one set for each evaluation sample
+    train_set_seed: int = None # designated seed to sample training samples/demos
+    result_file: str = None # file name for saving performance; if None, then use the task name, model name, and config
 
+    # Model loading
+    per_device_train_batch_size: int = 4 # batch size per device for training
+    model_name: str = "meta-llama/Llama-2-7b-hf" # HuggingFace model name
+    load_float16: bool = True # load model parameters as float16
+    load_bfloat16: bool = False # load model parameters as bfloat16
+    load_int8: bool = False # load model parameters as int8
+    max_length: int = 4096 # max length the model can take
+    no_auto_device: bool = False # do not load model by auto device; should turn this on when using FSDP
 
-    #model loading -> need ot offlad this sumewhere
+    # Calibration
+    sfc: bool = False # whether to use SFC calibration
+    icl_sfc: bool = False # whether to use SFC calibration for ICL samples
+    tag: str = "online" # tag for saving the calibration file
+    # Training
+    trainer: str = "zo" 
+    ## options
+    ## - none: no training -- for zero-shot or in-context learning (ICL)
+    ## - regular: regular huggingface trainer -- for fine-tuning
+    ## - zo: zeroth-order (MeZO) training
+    only_train_option: bool = True # whether to only train the option part of the input
+    train_as_classification: bool = False # take the log likelihood of all options and train as classification 
 
-    # calibration sfc i dont think we can use this for non differentialble
-
-
+    # MeZO random perturbation epsilon
     zo_eps: float = 1e-3 # eps in MeZO
-    num_prefix: int = 0 # number of prefix tokens to use for MeZO
-    
 
-    # lora
-    lora: bool = False # whether to use lora
-    lora_alpha: int = 16
-    lora_r: int = 8
+    # Prefix tuning
+    prefix_tuning: bool = False # whether to use prefix tuning
+    num_prefix: int = 5 # number of prefixes to use
+    no_reparam: bool = True # do not use reparameterization trick
+    prefix_init_by_real_act: bool = True # initialize prefix by real activations of random words
 
-    #generation
-    sampling: bool = False # whether to use samplign
-    temperature: float = 1.0 # temperature for sampling
-    num_beams: int = 1 # number of beams for beam search
-    top_k: int = None # top k for top k sampling
+    # LoRA
+    lora: bool = False # whether to use LoRA
+    lora_alpha: int = 16 # alpha in LoRA
+    lora_r: int = 8 # r in LoRA
+
+    # Generation
+    sampling: bool = False # whether to use sampling
+    temperature: float = 1.0 # temperature for generation
+    num_beams: int = 1 # number of beams for generation
+    top_k: int = None # top-k for generation
     top_p: float = 0.95 # top-p for generation
     max_new_tokens: int = 50 # max number of new tokens to generate
-    eos_token: str = "\n" # end of stentence token
+    eos_token: str = "\n" # end of sentence token
 
-    # saving
-    save_model: bool = False #whether to save the model
-    no_eval: bool = False # whether to evaluate on the validation set
-    tag: str = "" # tag for saving the model
+    # Saving
+    save_model: bool = False # whether to save the model
+    no_eval: bool = False # whether to skip evaluation
+    tag: str = "" # saving tag
+
     # Linear probing
-    linear_probe: bool = False # whether to do linear probing
-    lp_early_stopping: bool = False # whether to do early stopping for linear probing
-    #untie emb/lm_head weights
-    untie_emb: bool = False
+    linear_probing: bool = False # whether to do linear probing
+    lp_early_stopping: bool = False # whether to do early stopping in linear probing
+    head_tuning: bool = False # head tuning: only tune the LM head
 
-    # display
-    verbos:bool = False
-    #non-differentiable
-    non_diff: bool = False
+    # Untie emb/lm_head weights
+    untie_emb: bool = False # untie the embeddings and LM head
 
-    # auto saving when interrupted
-    save_on_interrupt: bool = False
+    # Display
+    verbose: bool = True # verbose output
+
+    # Non-diff objective
+    non_diff: bool = False # use non-differentiable objective (only support F1 for SQuAD for now)
+
+    # Auto saving when interrupted
+    save_on_interrupt: bool = False # save model when interrupted (useful for long training)
+    output_dir: str = "result" # output directory
+
+    # extra 
+    learning_rate: float = 1e-9
+    lr_scheduler_type: str = "constant"
+    
+    save_total_limit: int = 1
+    train_as_classification: bool = True
+    # steps
+    max_steps: int = 10
+    eval_steps: int = 10 
+
+
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -80,53 +123,88 @@ def set_seed(seed: int):
 
 class Framework:
 
+ 
+
     def __init__(self, args, task):
         self.args = args
-        self.task = task 
+        self.task = task
         self.model, self.tokenizer = self.load_model()
 
-
+    # loads huggingface model w/ huggingface format
     def load_model(self):
-
-        with count_time("Load model wtih wtih HF"):
-            free_in_gb = int(torch.cuda.mem_get_info()[0]/1024**3)
+        """
+        Load HuggingFace models
+        """
+        with count_time("Loading model with FP%d" % (16 if self.args.load_float16 else 32)):
+            free_in_GB = int(torch.cuda.mem_get_info()[0]/1024**3)
             config = AutoConfig.from_pretrained(self.args.model_name)
-            if self.args.unti_emb:
-                logger.warm("Untying embedding and lm_head weights")
+            if self.args.untie_emb:
+                # Untie embeddings/LM head
+                logger.warn("Untie embeddings and LM head")
                 config.tie_word_embeddings = False
+            if self.args.head_tuning:
+                # Head tuning
+                from ht_opt import OPTForCausalLM
+                model = OPTForCausalLM.from_pretrained(
+                    self.args.model_name,
+                    config=config,
+                )
             elif self.args.no_auto_device:
-                # no auto device for FSDP
+                # No auto device (use for FSDP)
                 model = AutoModelForCausalLM.from_pretrained(
                     self.args.model_name,
-                    config=config
+                    config=config,
                 )
-
             else:
-                    # Auto device loading
+                # Auto device loading
                 torch_dtype = torch.float32
                 if self.args.load_float16:
                     torch_dtype = torch.float16
                 elif self.args.load_bfloat16:
                     torch_dtype = torch.bfloat16
+                print(self.args.model_name)
+                print(config)
                 model = AutoModelForCausalLM.from_pretrained(
                     self.args.model_name,
-                    config=config)
+                    config=config,
+                    device_map='auto',
+                    torch_dtype=torch_dtype,
+                    max_memory={i: f'{free_in_GB-5}GB' for i in range(torch.cuda.device_count())},
+                    load_in_8bit=self.args.load_int8,
+                    offload_folder='save_folder'
+                )
             model.eval()
+
         # Load tokenizer
         tokenizer = AutoTokenizer.from_pretrained(self.args.model_name, use_fast=False)
-        # add padding token for llamav2
-         # add padding token for llamav2 
+        # add padding token for llamav2 
         if 'llama' in self.args.model_name:
             tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-            # rewsize tokenizer embeddings length
             model.resize_token_embeddings(len(tokenizer))
-        # lora
+        # HF tokenizer bug fix
+        if "opt" in self.args.model_name:
+            tokenizer.bos_token_id = 0
+
+        # Prefix tuning/LoRA
+        if self.args.prefix_tuning:
+            from prefix import PrefixTuning
+            PrefixTuning(model, num_prefix=self.args.num_prefix, reparam=not self.args.no_reparam, float16=self.args.load_float16, init_by_real_act=self.args.prefix_init_by_real_act)
         if self.args.lora:
             from lora import LoRA
             LoRA(model, r=self.args.lora_r, alpha=self.args.lora_alpha, float16=self.args.load_float16)
 
+        if self.args.head_tuning:
+            if model.config.model_type == "opt":
+                head_name = "lm_head" if self.args.untie_emb else "embed_tokens"
+            else:
+                raise NotImplementedError
+            for n, p in model.named_parameters():
+                if head_name not in n:
+                    p.requires_grad = False
+                else:
+                    logger.info(f"Only tuning {n}")
+
         return model, tokenizer
-    
 
     # normal forward pass < need to make it so we have feedback model plus normal model w/ hotswapping weights>
 
@@ -154,22 +232,228 @@ class Framework:
             return output_text
         else:
             with torch.inference_mode():
-                self.mode.eval()
+                self.model.eval()
                 # get probablity distribution
                 logits = self.model(input_ids=input_ids).logits
             labels = input_ids[0,1:]
             logits = logits[0, :-1]
+            
             log_probs = F.log_softmax(logits, dim=-1)
-
+            # print(log_probs)
+            # print(log_probs.shape)
             selected_log_probs = log_probs[torch.arange(len(labels)).to(labels.device), labels]
             selected_log_probs = selected_log_probs.cpu().detach()
-
+            print(selected_log_probs)
             return selected_log_probs[-option_len:]
         
+    
     def one_step_pred(self, train_samples, eval_sample, verbose=False):
-        '''
-        Return the prediction on eval sample 
-        '''
-        pass
+        """
+        Return the prediction on the eval sample. In ICL, use train_samples as demonstrations
+        """
+        verbose = verbose or self.args.verbose
+        if verbose:
+            logger.info("========= Example =========")
+            logger.info(f"Candidate: {eval_sample.candidates}")
+            logger.info(f"Correct candidate: {eval_sample.correct_candidate}")
 
-    def train_single_sample(
+
+        # Encode (add prompt and tokenize) the sample; if multiple-choice/classification, encode all candidates (options)
+        encoded_candidates, option_lens = encode_prompt(
+            self.task, self.task.get_template(), train_samples, eval_sample, self.tokenizer, max_length=self.args.max_length, 
+            generation=self.task.generation, max_new_tokens=self.args.max_new_tokens
+        )
+
+        # Calibration
+        if self.args.sfc or self.args.icl_sfc:
+            sfc_encoded_candidates, sfc_option_lens = encode_prompt(self.task, self.task.get_template(), 
+                train_samples, eval_sample, self.tokenizer, max_length=self.args.max_length,
+                sfc=self.args.sfc, icl_sfc=self.args.icl_sfc, generation=self.task.generation, 
+                max_new_tokens=self.args.max_new_tokens
+            )
+
+        outputs = []
+        if self.task.generation:
+            # For generation tasks, return the autoregressively-generated text
+            output_text = self.forward(encoded_candidates[0], generation=True)
+            if verbose:
+                logger.info("=== Prompt ===")
+                logger.info(self.tokenizer.decode(encoded_candidates[0]))
+                logger.info(f"Output: {output_text}") 
+            return Prediction(correct_candidate=eval_sample.correct_candidate, predicted_candidate=output_text)
+        else:
+            # For classification/multiple-choice, calculate the probabilities of all candidates
+            for candidate_id, encoded_candidate in enumerate(encoded_candidates):
+                selected_log_probs = self.forward(encoded_candidate, option_len=option_lens[candidate_id])
+                if verbose:
+                    if candidate_id == 0:
+                        logger.info("=== Candidate %d ===" % candidate_id)
+                        logger.info(self.tokenizer.decode(encoded_candidate))
+                    else:
+                        logger.info("=== Candidate %d (without context)===" % candidate_id)
+                        logger.info(self.tokenizer.decode(encoded_candidate).split(self.task.train_sep)[-1])
+                    logger.info(f"Log probabilities of the option tokens: {selected_log_probs}")
+
+                if self.args.sfc or self.args.icl_sfc:
+                    sfc_selected_log_probs = self.forward(sfc_encoded_candidates[candidate_id], option_len=sfc_option_lens[candidate_id])
+                    if verbose:
+                        logger.info("=== Candidate %d (without context) SFC ===" % candidate_id)
+                        logger.info(self.tokenizer.decode(sfc_encoded_candidates[candidate_id]).split(self.task.train_sep)[-1])
+                        logger.info(f"Log probabilities of the option tokens: {sfc_selected_log_probs}")
+
+                outputs.append({"log_probs": selected_log_probs, "sfc_log_probs": sfc_selected_log_probs if self.args.sfc or self.args.icl_sfc else None})
+
+            if self.args.sfc or self.args.icl_sfc:
+                # Calibrated probabilities (surface form competition; https://arxiv.org/pdf/2104.08315.pdf)
+                # log p(candidate | input) = log p_lm(candidate | input) - log p_lm(candidate | sfc prompt)
+                scores = [x['log_probs'].sum().item() - x['sfc_log_probs'].sum().item() for x in outputs]
+            else:
+                # (Default) length-normalized log probabilities
+                # log p(candidate | input) = log p_lm(candidate | input) / |candidate #tokens|
+                scores = [x['log_probs'].mean().item() for x in outputs]
+
+            if verbose:
+                logger.info(f"Prediction scores: {scores}")
+
+            if isinstance(eval_sample.correct_candidate, list):
+                # For some datasets there are multiple correct answers
+                correct_candidate_id = [eval_sample.candidates.index(c) for c in eval_sample.correct_candidate]
+            else:
+                correct_candidate_id = eval_sample.candidates.index(eval_sample.correct_candidate)
+
+            return Prediction(correct_candidate=correct_candidate_id, predicted_candidate=int(np.argmax(scores)))
+
+
+    
+    def evaluate(self, train_samples, eval_samples, one_train_set_per_eval_sample=False):
+        """
+        Evaluate function. If one_train_set_per_eval_sample is True, then each eval sample has its own training (demonstration) set.
+        """
+        if one_train_set_per_eval_sample:
+            logger.info(f"There are {len(eval_samples)} validation samples and one train set per eval sample")
+        else:
+            logger.info(f"There are {len(train_samples)} training samples and {len(eval_samples)} validation samples")
+
+        # Prediction loop
+        predictions = []  
+        for eval_id, eval_sample in enumerate(tqdm(eval_samples)):
+            predictions.append(
+                self.one_step_pred(train_samples[eval_id] if one_train_set_per_eval_sample else train_samples, eval_sample, verbose=(eval_id < 3))
+            )
+
+        # Calculate metrics 
+        metric_name = getattr(self.task, "metric_name", "accuracy")
+        metrics = {metric_name: calculate_metric(predictions, metric_name)}
+        return metrics
+    
+    def train(self, train_samples, eval_samples):
+        """
+        Training function
+        """
+        # Set tokenizer to left padding (so that all the options are right aligned)
+        self.tokenizer.padding_side = "left"
+
+        class HFDataset(Dataset):
+
+            def __init__(self, data):
+                self.data = data
+
+            def __len__(self):
+                return len(self.data)
+
+            def __getitem__(self, idx):
+                return self.data[idx]
+
+
+        def _convert(samples):
+            """
+            Convert samples to HF-compatible dataset
+            """
+            data = []
+            for sample in samples:
+                encoded_candidates, option_lens = encode_prompt(
+                    self.task, self.task.get_template(), [], sample, self.tokenizer, 
+                    max_length=self.args.max_length, generation=self.task.generation, generation_with_gold=True, 
+                    max_new_tokens=self.args.max_new_tokens
+                )
+                if self.task.generation:
+                    correct_candidate_id = 0
+                elif isinstance(sample.correct_candidate, list):
+                    correct_candidate_id = sample.candidates.index(sample.correct_candidate[0])
+                else:
+                    correct_candidate_id = sample.candidates.index(sample.correct_candidate)
+                
+                if self.args.non_diff:
+                    # For non-differentiable objective, there is no teacher forcing thus the 
+                    # current answer part is removed
+                    encoded_candidates[correct_candidate_id] = encoded_candidates[correct_candidate_id][:-option_lens[correct_candidate_id]]
+
+                if self.args.train_as_classification:
+                    # For classification, we provide the label as the correct candidate id
+                    data.append([{"input_ids": encoded_candidates[_i], "labels": correct_candidate_id, "option_len": option_lens[_i], "num_options": len(sample.candidates)} for _i in range(len(encoded_candidates))])
+                elif self.args.only_train_option:
+                    # Otherwise, it is just LM-style teacher forcing
+                    if self.args.non_diff:
+                        # For non-differentiable objective, we need to provide the gold answer to calculate F1/acc
+                        data.append({"input_ids": encoded_candidates[correct_candidate_id], "labels": encoded_candidates[correct_candidate_id], "option_len": option_lens[correct_candidate_id], "gold": sample.correct_candidate})
+                    else:
+                        data.append({"input_ids": encoded_candidates[correct_candidate_id], "labels": encoded_candidates[correct_candidate_id], "option_len": option_lens[correct_candidate_id]})
+                else:
+                    data.append({"input_ids": encoded_candidates[correct_candidate_id], "labels": encoded_candidates[correct_candidate_id]})
+            return data
+
+        with count_time("Tokenizing training samples"):
+            train_dataset = HFDataset(_convert(train_samples))
+            eval_dataset = HFDataset(_convert(eval_samples))
+        
+        if self.args.only_train_option and not self.args.non_diff:
+            # If --only_train_option and not with a non-differentiable objective, we wrap the forward function
+            self.model.original_forward = self.model.forward
+            self.model.forward = forward_wrap_with_option_len.__get__(self.model, type(self.model))
+
+        if self.args.non_diff:
+            collator = NondiffCollator
+        else:
+            collator = DataCollatorForTokenClassification
+        # FROM TRAINER .PY
+        trainer = OurTrainer(
+            model=self.model, 
+            args=self.args,
+            train_dataset=train_dataset, 
+            eval_dataset=eval_dataset,
+            tokenizer=self.tokenizer,
+            data_collator=DataCollatorWithPaddingAndNesting(self.tokenizer, pad_to_multiple_of=8) if self.args.train_as_classification else collator(self.tokenizer, pad_to_multiple_of=8),
+        )
+        if self.args.save_on_interrupt:
+            trainer.add_callback(SIGUSR1Callback())
+
+        # Resume training from a last checkpoint
+        last_checkpoint = None
+        from transformers.trainer_utils import get_last_checkpoint
+        if os.path.isdir(self.args.output_dir) and not self.args.overwrite_output_dir:
+            last_checkpoint = get_last_checkpoint(self.args.output_dir)
+        if last_checkpoint is not None and self.args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+        if self.args.resume_from_checkpoint is not None:
+            last_checkpoint = self.args.resume_from_checkpoint
+
+        trainer.train(resume_from_checkpoint=last_checkpoint) 
+
+        # Explicitly save the model
+        if self.args.save_model:
+            logger.warn("Save model..")
+            trainer.save_model()
+        
+        # FSDP compatibility
+        self.model = trainer.model 
+        
+        # Reset the forward function for evaluation
+        if self.args.only_train_option and not self.args.non_diff:
+            if type(self.model) == FSDP:
+                logger.info("This is an FSDP model now. Be careful when assigning back the original forward function")
+                self.model._fsdp_wrapped_module.forward = self.model._fsdp_wrapped_module.original_forward
+            else:
+                self.model.forward = self.model.original_forward
