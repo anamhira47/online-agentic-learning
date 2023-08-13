@@ -36,8 +36,9 @@ class OurArguments(TrainingArguments):
     result_file: str = None # file name for saving performance; if None, then use the task name, model name, and config
 
     # Model loading
+    per_device_train_batch_size: int = 4 # batch size per device for training
     model_name: str = "meta-llama/Llama-2-7b-hf" # HuggingFace model name
-    load_float16: bool = False # load model parameters as float16
+    load_float16: bool = True # load model parameters as float16
     load_bfloat16: bool = False # load model parameters as bfloat16
     load_int8: bool = False # load model parameters as int8
     max_length: int = 4096 # max length the model can take
@@ -93,7 +94,7 @@ class OurArguments(TrainingArguments):
     untie_emb: bool = False # untie the embeddings and LM head
 
     # Display
-    verbose: bool = False # verbose output
+    verbose: bool = True # verbose output
 
     # Non-diff objective
     non_diff: bool = False # use non-differentiable objective (only support F1 for SQuAD for now)
@@ -103,9 +104,15 @@ class OurArguments(TrainingArguments):
     output_dir: str = "result" # output directory
 
     # extra 
-    learning_rate: float = -1e-5
+    learning_rate: float = 1e-9
     lr_scheduler_type: str = "constant"
     
+    save_total_limit: int = 1
+    train_as_classification: bool = True
+    # steps
+    max_steps: int = 10
+    eval_steps: int = 10 
+
 
 
 def set_seed(seed: int):
@@ -230,20 +237,115 @@ class Framework:
                 logits = self.model(input_ids=input_ids).logits
             labels = input_ids[0,1:]
             logits = logits[0, :-1]
+            
             log_probs = F.log_softmax(logits, dim=-1)
-
+            # print(log_probs)
+            # print(log_probs.shape)
             selected_log_probs = log_probs[torch.arange(len(labels)).to(labels.device), labels]
             selected_log_probs = selected_log_probs.cpu().detach()
-
+            print(selected_log_probs)
             return selected_log_probs[-option_len:]
         
+    
     def one_step_pred(self, train_samples, eval_sample, verbose=False):
-        '''
-        Return the prediction on eval sample 
-        '''
-        pass
-    #
+        """
+        Return the prediction on the eval sample. In ICL, use train_samples as demonstrations
+        """
+        verbose = verbose or self.args.verbose
+        if verbose:
+            logger.info("========= Example =========")
+            logger.info(f"Candidate: {eval_sample.candidates}")
+            logger.info(f"Correct candidate: {eval_sample.correct_candidate}")
 
+
+        # Encode (add prompt and tokenize) the sample; if multiple-choice/classification, encode all candidates (options)
+        encoded_candidates, option_lens = encode_prompt(
+            self.task, self.task.get_template(), train_samples, eval_sample, self.tokenizer, max_length=self.args.max_length, 
+            generation=self.task.generation, max_new_tokens=self.args.max_new_tokens
+        )
+
+        # Calibration
+        if self.args.sfc or self.args.icl_sfc:
+            sfc_encoded_candidates, sfc_option_lens = encode_prompt(self.task, self.task.get_template(), 
+                train_samples, eval_sample, self.tokenizer, max_length=self.args.max_length,
+                sfc=self.args.sfc, icl_sfc=self.args.icl_sfc, generation=self.task.generation, 
+                max_new_tokens=self.args.max_new_tokens
+            )
+
+        outputs = []
+        if self.task.generation:
+            # For generation tasks, return the autoregressively-generated text
+            output_text = self.forward(encoded_candidates[0], generation=True)
+            if verbose:
+                logger.info("=== Prompt ===")
+                logger.info(self.tokenizer.decode(encoded_candidates[0]))
+                logger.info(f"Output: {output_text}") 
+            return Prediction(correct_candidate=eval_sample.correct_candidate, predicted_candidate=output_text)
+        else:
+            # For classification/multiple-choice, calculate the probabilities of all candidates
+            for candidate_id, encoded_candidate in enumerate(encoded_candidates):
+                selected_log_probs = self.forward(encoded_candidate, option_len=option_lens[candidate_id])
+                if verbose:
+                    if candidate_id == 0:
+                        logger.info("=== Candidate %d ===" % candidate_id)
+                        logger.info(self.tokenizer.decode(encoded_candidate))
+                    else:
+                        logger.info("=== Candidate %d (without context)===" % candidate_id)
+                        logger.info(self.tokenizer.decode(encoded_candidate).split(self.task.train_sep)[-1])
+                    logger.info(f"Log probabilities of the option tokens: {selected_log_probs}")
+
+                if self.args.sfc or self.args.icl_sfc:
+                    sfc_selected_log_probs = self.forward(sfc_encoded_candidates[candidate_id], option_len=sfc_option_lens[candidate_id])
+                    if verbose:
+                        logger.info("=== Candidate %d (without context) SFC ===" % candidate_id)
+                        logger.info(self.tokenizer.decode(sfc_encoded_candidates[candidate_id]).split(self.task.train_sep)[-1])
+                        logger.info(f"Log probabilities of the option tokens: {sfc_selected_log_probs}")
+
+                outputs.append({"log_probs": selected_log_probs, "sfc_log_probs": sfc_selected_log_probs if self.args.sfc or self.args.icl_sfc else None})
+
+            if self.args.sfc or self.args.icl_sfc:
+                # Calibrated probabilities (surface form competition; https://arxiv.org/pdf/2104.08315.pdf)
+                # log p(candidate | input) = log p_lm(candidate | input) - log p_lm(candidate | sfc prompt)
+                scores = [x['log_probs'].sum().item() - x['sfc_log_probs'].sum().item() for x in outputs]
+            else:
+                # (Default) length-normalized log probabilities
+                # log p(candidate | input) = log p_lm(candidate | input) / |candidate #tokens|
+                scores = [x['log_probs'].mean().item() for x in outputs]
+
+            if verbose:
+                logger.info(f"Prediction scores: {scores}")
+
+            if isinstance(eval_sample.correct_candidate, list):
+                # For some datasets there are multiple correct answers
+                correct_candidate_id = [eval_sample.candidates.index(c) for c in eval_sample.correct_candidate]
+            else:
+                correct_candidate_id = eval_sample.candidates.index(eval_sample.correct_candidate)
+
+            return Prediction(correct_candidate=correct_candidate_id, predicted_candidate=int(np.argmax(scores)))
+
+
+    
+    def evaluate(self, train_samples, eval_samples, one_train_set_per_eval_sample=False):
+        """
+        Evaluate function. If one_train_set_per_eval_sample is True, then each eval sample has its own training (demonstration) set.
+        """
+        if one_train_set_per_eval_sample:
+            logger.info(f"There are {len(eval_samples)} validation samples and one train set per eval sample")
+        else:
+            logger.info(f"There are {len(train_samples)} training samples and {len(eval_samples)} validation samples")
+
+        # Prediction loop
+        predictions = []  
+        for eval_id, eval_sample in enumerate(tqdm(eval_samples)):
+            predictions.append(
+                self.one_step_pred(train_samples[eval_id] if one_train_set_per_eval_sample else train_samples, eval_sample, verbose=(eval_id < 3))
+            )
+
+        # Calculate metrics 
+        metric_name = getattr(self.task, "metric_name", "accuracy")
+        metrics = {metric_name: calculate_metric(predictions, metric_name)}
+        return metrics
+    
     def train(self, train_samples, eval_samples):
         """
         Training function
@@ -279,11 +381,7 @@ class Framework:
                 elif isinstance(sample.correct_candidate, list):
                     correct_candidate_id = sample.candidates.index(sample.correct_candidate[0])
                 else:
-                    #TODO un random this for actual usage :skull:
-                    #correct_candidate_id = sample.candidates.index(sample.correct_candidate)
-                    correct_candidate_id = random.randint(0, 1)
-                    
-
+                    correct_candidate_id = sample.candidates.index(sample.correct_candidate)
                 
                 if self.args.non_diff:
                     # For non-differentiable objective, there is no teacher forcing thus the 
