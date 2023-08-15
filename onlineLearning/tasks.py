@@ -1,5 +1,5 @@
-from templates import *
-from utils import temp_seed
+from .templates import *
+from .utils import temp_seed
 import json
 import os
 from datasets import load_dataset
@@ -389,6 +389,28 @@ class SQuADDataset(Dataset):
         
     def get_template(self, template_version=0):
         return {0: SQuADv2Template}[template_version]()
+# Generic multi choice dataset for senidng from the onlinelearning
+class GenericMultiChoiceDataset(Dataset):
+
+    def __init__(self, subtask=None, **kwargs) -> None:
+        self.load_dataset()
+        pass
+    def load_dataset(self):
+        pass
+    def build_sample(self, example):
+        answer = example['correct_candidate']
+        assert len(answer) > 0
+        return Sample(
+            id=example["id"],
+            data=example['data'],
+            candidates=example['candidates'],
+            correct_candidate=answer
+        )
+    
+    def get_template(self, template_version=0):
+        pass
+
+
 
 
 class DROPDataset(Dataset):

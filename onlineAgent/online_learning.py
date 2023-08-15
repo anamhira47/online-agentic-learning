@@ -1,27 +1,36 @@
 from constrainedGen import ConstrainedGeneration
 from transformers import LlamaForCausalLM, LlamaTokenizer
 import torch
-from onlineAgent import feedback
-
+import random
+#from onlineAgent import feedback
+from onlineLearning.feedback import train
 class Online:
-    def __init__(self, json_schema, model_name):
+    def __init__(self, json_schema, model_name, candidate_space):
         # json schema to constrain generation to 
         self.json_schema = json_schema
         # HF model to load
         self.model_name = model_name
-        try: 
+        self.candidate_space = candidate_space
             # Load model and tokenizer
+        try:
             tokenizer = LlamaTokenizer.from_pretrained(model_name)
             model = LlamaForCausalLM.from_pretrained(model_name, load_in_8bit=True, device_map='auto', torch_dtype=torch.float16)
+        
         except:
-            print("Error loading model and tokenizer")
-        # Take care of loading for model through HF and tokenizer
-        # load json builder
-        self.builder = ConstrainedGeneration(
-            model=model,
-            tokenizer=tokenizer,
-            json_schema=json_schema,
-            max_string_token_length=20)
+            print("Model not found")
+            return
+        try:
+
+            # Take care of loading for model through HF and tokenizer
+            # load json builder
+            self.builder = ConstrainedGeneration(
+                model=model,
+                tokenizer=tokenizer,
+                json_schema=json_schema,
+                max_string_token_length=20)
+        except:
+            print("Model not found")
+            return
         
 
 
@@ -31,7 +40,7 @@ class Online:
         Given a prompt generate a new text wrt the json schema specified
         '''
         # Generate text
-
+        self.curr_prompt = prompt
         output = self.builder(prompt)
         self.curr_output = output
         return output
@@ -42,7 +51,7 @@ class Online:
 
 
 
-    def feedback(self, feedback):
+    def feedback(self, correct_output):
         '''
         If online learning is enabled, then get user feedback and 
         update the model online/zeroth order optimization
@@ -73,9 +82,39 @@ class Online:
             6. Send this to fwdpass learning w/ random perturbations to get estimated gradient and step
             7. Update the model
             8. Repeat
+            sample format example
 
+            sample = \
+            Sample(
+                id=example["idx"],
+                data=example,
+                candidates=[example["choice1"], example["choice2"]],
+                correct_candidate=example[f"choice{example['label'] + 1}"],
+            )
+            <for now set it up in the format of >
+            Prompt 
+            Choices
+            Correct choice
+            example = {
+            "idx": hash(sample),
+            "data" = prompt
+            "candidates" = choices
+            "correct_candidate" = feedback
+            }
             '''
-            feedback.train(self.curr_output, feedback)
+
+            # build sample
+            example = {
+            "idx": hash(random.random()),
+            "data": self.curr_prompt,
+            "candidates": self.candidate_space,
+            "correct_candidate": correct_output
+
+            }
+
+            learn.train(self.curr_output, example)
+            
+
             
             
 
