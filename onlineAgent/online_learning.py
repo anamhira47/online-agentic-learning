@@ -1,7 +1,7 @@
 from constrainedGen import ConstrainedGeneration
 from transformers import LlamaForCausalLM, LlamaTokenizer
 import torch
-from onlineAgent import feedback
+#from onlineAgent import feedback
 
 class Online:
     def __init__(self, json_schema, model_name):
@@ -9,19 +9,27 @@ class Online:
         self.json_schema = json_schema
         # HF model to load
         self.model_name = model_name
-        try: 
+ 
             # Load model and tokenizer
+        try:
             tokenizer = LlamaTokenizer.from_pretrained(model_name)
             model = LlamaForCausalLM.from_pretrained(model_name, load_in_8bit=True, device_map='auto', torch_dtype=torch.float16)
+        
         except:
-            print("Error loading model and tokenizer")
-        # Take care of loading for model through HF and tokenizer
-        # load json builder
-        self.builder = ConstrainedGeneration(
-            model=model,
-            tokenizer=tokenizer,
-            json_schema=json_schema,
-            max_string_token_length=20)
+            print("Model not found")
+            return
+        try:
+
+            # Take care of loading for model through HF and tokenizer
+            # load json builder
+            self.builder = ConstrainedGeneration(
+                model=model,
+                tokenizer=tokenizer,
+                json_schema=json_schema,
+                max_string_token_length=20)
+        except:
+            print("Model not found")
+            return
         
 
 
@@ -73,9 +81,30 @@ class Online:
             6. Send this to fwdpass learning w/ random perturbations to get estimated gradient and step
             7. Update the model
             8. Repeat
+            sample format example
 
+            sample = \
+            Sample(
+                id=example["idx"],
+                data=example,
+                candidates=[example["choice1"], example["choice2"]],
+                correct_candidate=example[f"choice{example['label'] + 1}"],
+            )
+            <for now set it up in the format of >
+            Prompt 
+            Choices
+            Correct choice
+            example = {
+            "idx": hash(sample),
+            "data" = prompt
+            "candidates" = choices
+            "correct_candidate" = feedback
+            }
             '''
+
             feedback.train(self.curr_output, feedback)
+            
+
             
             
 
