@@ -70,7 +70,7 @@ samples_test = [
 
 # Instantiate the template
 #template = WICTemplate()
-
+#task_name = GenericMultiChoice
 # Use the template to encode the sample
 args = OurArguments()
 #print(args.task_name)

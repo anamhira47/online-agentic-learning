@@ -1,15 +1,16 @@
 from constrainedGen import ConstrainedGeneration
 from transformers import LlamaForCausalLM, LlamaTokenizer
 import torch
+import random
 #from onlineAgent import feedback
-
+from onlineLearning.feedback import train
 class Online:
-    def __init__(self, json_schema, model_name):
+    def __init__(self, json_schema, model_name, candidate_space):
         # json schema to constrain generation to 
         self.json_schema = json_schema
         # HF model to load
         self.model_name = model_name
- 
+        self.candidate_space = candidate_space
             # Load model and tokenizer
         try:
             tokenizer = LlamaTokenizer.from_pretrained(model_name)
@@ -39,7 +40,7 @@ class Online:
         Given a prompt generate a new text wrt the json schema specified
         '''
         # Generate text
-
+        self.curr_prompt = prompt
         output = self.builder(prompt)
         self.curr_output = output
         return output
@@ -50,7 +51,7 @@ class Online:
 
 
 
-    def feedback(self, feedback):
+    def feedback(self, correct_output):
         '''
         If online learning is enabled, then get user feedback and 
         update the model online/zeroth order optimization
@@ -102,7 +103,16 @@ class Online:
             }
             '''
 
-            feedback.train(self.curr_output, feedback)
+            # build sample
+            example = {
+            "idx": hash(random.random()),
+            "data": self.curr_prompt,
+            "candidates": self.candidate_space,
+            "correct_candidate": correct_output
+
+            }
+
+            learn.train(self.curr_output, example)
             
 
             

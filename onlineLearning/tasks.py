@@ -1,5 +1,5 @@
-from templates import *
-from utils import temp_seed
+from .templates import *
+from .utils import temp_seed
 import json
 import os
 from datasets import load_dataset

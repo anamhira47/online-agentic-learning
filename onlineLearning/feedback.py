@@ -4,7 +4,7 @@ Tried to finesse it with run.py but lowkey need ot build it ground up too many d
 '''
 import argparse
 import time
-import tasks
+#import tasks
 from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM, Trainer, HfArgumentParser, Trainer, TrainingArguments, DataCollatorWithPadding, DataCollatorForTokenClassification
 from typing import Union, Optional
 import torch
@@ -12,20 +12,20 @@ from torch.nn.parameter import Parameter
 import numpy as np
 from dataclasses import dataclass, is_dataclass, asdict
 from tqdm import tqdm
-from tasks import get_task
+from .tasks import get_task
 import json
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torch.distributed.fsdp.fully_sharded_data_parallel import FullyShardedDataParallel as FSDP
-from metrics import calculate_metric
-from utils import *
-from trainer import OurTrainer
+from .metrics import calculate_metric
+from .utils import *
+from .trainer import OurTrainer
 import random
 
 @dataclass
 class OurArguments(TrainingArguments):
     # dataset and sampling strategy
-    task_name: str = "WIC" # task name should match the string before Dataset in the Dataset class name. We support the following task_name: SST2, RTE, CB, BoolQ, WSC, WIC, MultiRC, Copa, ReCoRD, SQuAD, DROP
+    task_name: str = "GenericMultiChoice" # task name should match the string before Dataset in the Dataset class name. We support the following task_name: SST2, RTE, CB, BoolQ, WSC, WIC, MultiRC, Copa, ReCoRD, SQuAD, DROP
     mode: str = "ft" # train, eval, test, or interactive
     # Number of examples
     num_train: int = 0 # ICL mode: number of demonstrations; training mode: number of training samples
