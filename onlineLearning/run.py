@@ -338,7 +338,6 @@ class Framework:
         '''
         self.tokenizer.padding_side = 'left'
         '''
-        set some of the arguments for the trainer
         '''
         
         class HFDataset(Dataset):

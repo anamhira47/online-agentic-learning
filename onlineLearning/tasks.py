@@ -11,6 +11,7 @@ import datasets
 import sys
 import numpy as np
 import logging
+from sklearn.model_selection import train_test_split
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -390,12 +391,32 @@ class SQuADDataset(Dataset):
     def get_template(self, template_version=0):
         return {0: SQuADv2Template}[template_version]()
 # Generic multi choice dataset for senidng from the onlinelearning
+'''
+#TODO LETS DO THIS LATER 
+class Mind2WebDataset(Dataset):
+    def __init(self, subtask=None, **kwargs) -> None:
+        self.load_dataset()
+        
+    def load_dataset(self):
+        dataset = load_dataset("mind2web")
+        all_samples = dataset["train"]
+        train_samples, valid_samples = train_test_split(all_samples, test_size=0.1)
+        self.samples = {"train": [self.build_sample(example,idx) for idx, example in train_samples], 
+                        "valid": [self.build_sample(example, idx) for idx, example in valid_samples]}
+
+    def build_sample(self, example, idx):
+
+
+'''
 class GenericMultiChoiceDataset(Dataset):
 
     def __init__(self, subtask=None, **kwargs) -> None:
         self.load_dataset()
         pass
     def load_dataset(self):
+        '''
+        Implementation with
+        '''
         pass
     def build_sample(self, example):
         answer = example['correct_candidate']
@@ -408,7 +429,7 @@ class GenericMultiChoiceDataset(Dataset):
         )
     
     def get_template(self, template_version=0):
-        pass
+        return {0: GenericMultiChoiceTemplate}[template_version]()
 
 
 

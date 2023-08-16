@@ -353,7 +353,19 @@ class SQuADv2Template(Template):
     def verbalize_sfc(self, sample, candidate):
         raise NotImplementedError
 
-
+class GenericMultiChoiceTemplate(Template):
+    def encode(self, sample):
+        prompt = sample.data.strip()
+        return f"{prompt}\n"
+    def verbalize(self, sample, candidate):
+        prompt = sample.data['prompt'].strip()
+        answer = sample.correct_candidate
+        return f"{prompt}\n{answer}"
+    def encode_sfc(self, sample):
+        raise NotImplementedError
+    def verbalize_sfc(self, sample, candidate):
+        raise NotImplementedError
+    
 class DROPTemplate(Template):
 
     def encode(self, sample):
