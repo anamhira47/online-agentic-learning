@@ -117,8 +117,10 @@ class Online:
         "correct_candidate": correct_output
 
         }
-
-        self.framework.train(self.curr_output, example)
+        # 
+        # TODO add the seed eval_samples to the framework for evaluation of loss
+        #or generate examples on the fly w/LLM
+        self.framework.train(example, )
             
 
             

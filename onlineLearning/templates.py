@@ -122,7 +122,7 @@ class BoolQTemplate(Template):
     
     def verbalize_sfc(self, sample, candidate):
         return candidate
-
+class Mind2WebTemplate(Template):
 
 class BoolQTemplateV2(Template):
     def encode(self, sample):
