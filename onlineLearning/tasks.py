@@ -1,5 +1,5 @@
-from .templates import *
-from .utils import temp_seed
+from templates import *
+from utils import temp_seed
 import json
 import os
 from datasets import load_dataset
@@ -394,12 +394,77 @@ class SQuADDataset(Dataset):
         return {0: SQuADv2Template}[template_version]()
 # Generic multi choice dataset for senidng from the onlinelearning
 
+# non diff version of Mind2web
+class Mind2WebNonDiffDataset(Dataset):
+    metric_name = "f1"
+    generation = True
+    def __init__(self, subtask=None, **kwargs) -> None:
+        self.load_dataset()
+    def load_dataset(self):
+        print('Getting data')
+        data_path = '/home/anam.hira/Mind2Web'
+        train_split_file = 'data/train/*.json'
+        test_split_files = {
+        'test_task': 'data/test_task/*.json',
+        'test_website': 'data/test_website/*.json',
+        'test_domain': 'data/test_domain/*.json'
+        }
+        score_file = '/home/anam.hira/Mind2Web/scores_all_data.pkl'
+        with open(score_file, "rb") as f:
+            candidate_results = pickle.load(f)
+        test_dataset_dict = {}
+
+        i = 0
+        for test_key, test_split_file in test_split_files.items():
+            if i >= 1:
+                break
+            i += 1
+            test_data = get_data_split(
+                data_path,
+                test_split_file,
+                candidate_results=candidate_results,
+            )
+            print("Got test data")
+            test_dataset_dict[test_key] = TextMultiChoiceDataset(
+                test_data,
+                neg_ratio=0.5,  # Specify the desired neg_ratio
+                num_candidates=5,  # Specify the desired num_candidates
+                max_context_len=512,  # Specify the desired max_context_len
+                mode='multichoice',  # Specify the desired mode
+            )
+        #dataset = load_dataset("mind2web")
+        #all_samples = dataset["train"]
+        
+        for key, dataset in test_dataset_dict.items():
+            train_samples, valid_samples = train_test_split(dataset, test_size=0.1)
+            self.samples = {"train": [self.build_sample(example,idx) for idx, example in enumerate(train_samples)], 
+                                 "valid": [self.build_sample(example, idx) for idx, example in enumerate(valid_samples)]}
+            
+    def build_sample(self, example, idx):
+        context = example['context']
+        question = example['input']
+        answer = example['output']
+        return Sample(
+            id=idx,
+            data={"context": context,
+                    "question": question,
+                    "answer": answer},
+            candidates=None,
+            correct_candidate=answer
+        )
+    def get_template(self, template_version=0):
+        return {0: Mind2WebNonDiffTemplate}[template_version]()
+
+        
+    
+
 
 class Mind2WebDataset(Dataset):
-    def __init(self, subtask=None, **kwargs) -> None:
+    def __init__(self, subtask=None, **kwargs) -> None:
         self.load_dataset()
         
     def load_dataset(self):
+        print('Getting data')
         data_path = '/home/anam.hira/Mind2Web'
         train_split_file = 'data/train/*.json'
         test_split_files = {
@@ -447,7 +512,7 @@ class Mind2WebDataset(Dataset):
         operation_types = ['CLICK', 'TYPE', 'SELECT']
         candidates = [f"{letter}.\nAction: {operation}\n" for letter in letters for operation in operation_types]
         # add none of the above option
-        candidates.append(f"A.\nAction: None\n")
+        candidates.append(f"A. None")
 
 
         return Sample(
@@ -462,7 +527,8 @@ class Mind2WebDataset(Dataset):
 
 
     def get_template(self, template_version=0):
-        return {0: Mind2WebTemplates}[template_version]()
+        return {0: Mind2WebDataset}[template_version]()
+    
 
 
 

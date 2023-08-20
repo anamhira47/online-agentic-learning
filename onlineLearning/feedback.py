@@ -12,27 +12,27 @@ from torch.nn.parameter import Parameter
 import numpy as np
 from dataclasses import dataclass, is_dataclass, asdict
 from tqdm import tqdm
-from .tasks import get_task
+from tasks import get_task
 import json
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torch.distributed.fsdp.fully_sharded_data_parallel import FullyShardedDataParallel as FSDP
-from .metrics import calculate_metric
-from .utils import *
-from .trainer import OurTrainer
+from metrics import calculate_metric
+from utils import *
+from trainer import OurTrainer
 import random
 
 @dataclass
 class OurArguments(TrainingArguments):
     # dataset and sampling strategy
-    task_name: str = "GenericMultiChoice" # task name should match the string before Dataset in the Dataset class name. We support the following task_name: SST2, RTE, CB, BoolQ, WSC, WIC, MultiRC, Copa, ReCoRD, SQuAD, DROP
+    task_name: str = "Mind2Web" # task name should match the string before Dataset in the Dataset class name. We support the following task_name: SST2, RTE, CB, BoolQ, WSC, WIC, MultiRC, Copa, ReCoRD, SQuAD, DROP
     mode: str = "ft" # train, eval, test, or interactive
     # Number of examples
     num_train: int = 0 # ICL mode: number of demonstrations; training mode: number of training samples
     num_dev: int = None # (only enabled with training) number of development samples
     num_eval: int = None # number of evaluation samples
-    num_train_sets: int = None # how many sets of training samples/demos to sample; if None and train_set_seed is None, then we will sample one set for each evaluation sample
-    train_set_seed: int = None # designated seed to sample training samples/demos
+    num_train_sets: int = 1 # how many sets of training samples/demos to sample; if None and train_set_seed is None, then we will sample one set for each evaluation sample
+    train_set_seed: int = 42 # designated seed to sample training samples/demos
     result_file: str = None # file name for saving performance; if None, then use the task name, model name, and config
 
     # Model loading

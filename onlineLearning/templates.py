@@ -123,6 +123,43 @@ class BoolQTemplate(Template):
     def verbalize_sfc(self, sample, candidate):
         return candidate
 class Mind2WebTemplate(Template):
+    def encode(self, sample):
+        passage = "user: + \n" + sample.data['context'] + sample.data['question']
+        return f"{passage}"
+    def verbalize(self, sample, candidate):
+        passage = "user: + \n" + sample.data['context'] + sample.data['question']
+        return f"{passage} {candidate}"
+    
+    def encode_sfc(self, sample):
+        return f''
+    def verbalize_sfc(self, sample, candidate):
+        return f"{candidate}"
+
+
+class WICTemplate(Template):
+    # From PromptSource 1
+    verbalizer = {0: "No", 1: "Yes"}
+
+    def encode(self, sample):
+        print(sample)
+        sent1 = sample.data["sentence1"]
+        sent2 = sample.data["sentence2"]
+        word = sample.data["word"]
+        return f"Does the word \"{word}\" have the same meaning in these two sentences? Yes, No?\n{sent1}\n{sent2}\n"
+
+    def verbalize(self, sample, candidate):
+        sent1 = sample.data["sentence1"]
+        sent2 = sample.data["sentence2"]
+        word = sample.data["word"]
+        return f"Does the word \"{word}\" have the same meaning in these two sentences? Yes, No?\n{sent1}\n{sent2}\n{self.verbalizer[candidate]}"
+
+    def encode_sfc(self, sample):
+        return f""
+
+    def verbalize_sfc(self, sample, candidate):
+        return f"{self.verbalizer[candidate]}"
+
+
 
 class BoolQTemplateV2(Template):
     def encode(self, sample):
@@ -216,29 +253,6 @@ class CBTemplate(Template):
         return f"{self.verbalizer[candidate]}"
 
 
-class WICTemplate(Template):
-    # From PromptSource 1
-    verbalizer = {0: "No", 1: "Yes"}
-
-    def encode(self, sample):
-        print(sample)
-        sent1 = sample.data["sentence1"]
-        sent2 = sample.data["sentence2"]
-        word = sample.data["word"]
-        return f"Does the word \"{word}\" have the same meaning in these two sentences? Yes, No?\n{sent1}\n{sent2}\n"
-
-    def verbalize(self, sample, candidate):
-        sent1 = sample.data["sentence1"]
-        sent2 = sample.data["sentence2"]
-        word = sample.data["word"]
-        return f"Does the word \"{word}\" have the same meaning in these two sentences? Yes, No?\n{sent1}\n{sent2}\n{self.verbalizer[candidate]}"
-
-    def encode_sfc(self, sample):
-        return f""
-
-    def verbalize_sfc(self, sample, candidate):
-        return f"{self.verbalizer[candidate]}"
-
 
 class WSCTemplate(Template):
     # From PromptSource 1
@@ -327,6 +341,24 @@ class RTETemplate(Template):
     def verbalize_sfc(self, sample, candidate):
         return f"{self.verbalizer[candidate]}"
 
+class Mind2WebNonDiffTemplate(Template):
+    def encode(self, sample):
+        '''
+        question = sample.data['question']
+        context = sample.data['context']
+        answer = sample.data['answer']
+        '''
+        passage = "user: + \n" + sample.data['context'] + sample.data['question']
+        return f"{passage}"
+    def verbalize(self, sample, candidate):
+        passage = "user: + \n" + sample.data['context'] + sample.data['question']
+        return f"{passage} {candidate}"
+    
+    def encode_sfc(self, sample):
+        return f''
+    def verbalize_sfc(self, sample, candidate):
+        return f"{candidate}"
+    
 
 class SQuADv2Template(Template):
 

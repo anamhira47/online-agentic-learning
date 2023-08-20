@@ -32,7 +32,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 import copy
-from .metrics import f1
+from metrics import f1
 import numpy as np
 
 from tqdm.auto import tqdm

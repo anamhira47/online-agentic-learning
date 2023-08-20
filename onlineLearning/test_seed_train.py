@@ -1,8 +1,8 @@
-from onlineLearning.feedback import Framework, OurArguments
-from onlineLearning.tasks import get_task
+from feedback import Framework, OurArguments
+from tasks import get_task
 import torch
 import numpy as np
-improt random
+import random
 import argparse
 import tasks
 from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM, Trainer, HfArgumentParser, Trainer, TrainingArguments, DataCollatorWithPadding, DataCollatorForTokenClassification
@@ -43,14 +43,30 @@ def result_file_tag(args):
 
 
 def main():
+    
     args = parse_args()
-
     set_seed(args.seed)
     task = get_task(args.task_name)
-    train_sets = task.sample_train_sets(num_train=args.num_train, num_dev=args.num_dev, num_eval=args.num_eval, num_train_sets=args.num_train_sets, seed=args.train_set_seed)
-
-    # Initialize trainer and load model
     framework = Framework(args, task)
+    
+   #task = get_task("Mind2Web")
+    import json
+    import os
+    
+    # Check if the sample file exists
+    if os.path.exists('sample_train_sets.json'):
+        # Load the sample from the file
+        with open('sample_train_sets.json', 'r') as f:
+            train_sets = json.load(f)
+    else:
+        # Generate the sample and save it to a file
+        train_sets = task.sample_train_sets(num_train=10, num_dev=10, num_eval=10, num_train_sets=1, seed=42)
+        with open('sample_train_sets.json', 'w') as f:
+            json.dump(train_sets, f)
+    #print(train_sets)
+
+    '''
+    
 
     if args.train_set_seed is not None or args.num_train_sets is not None:
         # Eval samples share one (or multiple) training set(s)
@@ -62,7 +78,7 @@ def main():
                 eval_samples = task.sample_subset(data_split="valid", seed=train_set_seed, num=args.num_eval)
             else:
                 eval_samples = task.valid_samples
-
+            
             if args.trainer != "none":
                 if args.num_dev is not None:
                     # Dev samples
@@ -104,6 +120,6 @@ def main():
         logger.info(metrics)
         if args.local_rank <= 0:
             write_metrics_to_file(metrics, "result/" + result_file_tag(args) + "-onetrainpereval.json" if args.result_file is None else args.result_file)
-
+    '''
 if __name__ == "__main__": 
     main()
