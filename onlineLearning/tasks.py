@@ -461,10 +461,10 @@ class Mind2WebNonDiffDataset(Dataset):
 
 class Mind2WebDataset(Dataset):
     def __init__(self, subtask=None, **kwargs) -> None:
-        self.load_dataset()
+        pass
         
     def load_dataset(self):
-        print('Getting data')
+        print('Getting data (load_datset)')
         data_path = '/home/anam.hira/Mind2Web'
         train_split_file = 'data/train/*.json'
         test_split_files = {
@@ -487,7 +487,7 @@ class Mind2WebDataset(Dataset):
                 test_split_file,
                 candidate_results=candidate_results,
             )
-            print("Got test data")
+            print("Got test data (load_dataset)")
             test_dataset_dict[test_key] = TextMultiChoiceDataset(
                 test_data,
                 neg_ratio=0.5,  # Specify the desired neg_ratio
@@ -497,7 +497,7 @@ class Mind2WebDataset(Dataset):
             )
         #dataset = load_dataset("mind2web")
         #all_samples = dataset["train"]
-        
+        print(f'Building samples (load_dataset) Number of sets:{len(test_dataset_dict)}')
         for key, dataset in test_dataset_dict.items():
             train_samples, valid_samples = train_test_split(dataset, test_size=0.1)
             self.samples = {"train": [self.build_sample(example,idx) for idx, example in enumerate(train_samples)], 
@@ -510,9 +510,11 @@ class Mind2WebDataset(Dataset):
         #candidates = 
         letters = ['B','C','D']
         operation_types = ['CLICK', 'TYPE', 'SELECT']
-        candidates = [f"{letter}.\nAction: {operation}\n" for letter in letters for operation in operation_types]
+        candidates = [f"{letter}.\nAction: {operation}" for letter in letters for operation in operation_types]
         # add none of the above option
         candidates.append(f"A. None")
+        # remove the text after 'Value:' for the answer if it has a value
+        answer = answer.split('Value:')[0].strip() if 'Value:' in answer else answer
 
 
         return Sample(
@@ -527,7 +529,7 @@ class Mind2WebDataset(Dataset):
 
 
     def get_template(self, template_version=0):
-        return {0: Mind2WebDataset}[template_version]()
+        return {0: Mind2WebTemplate}[template_version]()
     
 
 

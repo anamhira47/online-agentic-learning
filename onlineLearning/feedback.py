@@ -36,12 +36,12 @@ class OurArguments(TrainingArguments):
     result_file: str = None # file name for saving performance; if None, then use the task name, model name, and config
 
     # Model loading
-    per_device_train_batch_size: int = 4 # batch size per device for training
+    per_device_train_batch_size: int = 1 # batch size per device for training
     model_name: str = "meta-llama/Llama-2-7b-hf" # HuggingFace model name
     load_float16: bool = True # load model parameters as float16
     load_bfloat16: bool = False # load model parameters as bfloat16
     load_int8: bool = False # load model parameters as int8
-    max_length: int = 4096 # max length the model can take
+    max_length: int = 2048 # max length the model can take
     no_auto_device: bool = False # do not load model by auto device; should turn this on when using FSDP
 
     # Calibration
@@ -208,7 +208,7 @@ class Framework:
 
     # normal forward pass < need to make it so we have feedback model plus normal model w/ hotswapping weights>
 
-    def forward(self, input_ids, option_len=None, generation=True):
+    def forward(self, input_ids, option_len=None, generation=False):
         """
         Given input_ids and the length of the option, return the log-likelihood of each token in the option.
         For generation tasks, return the generated text.
@@ -225,16 +225,19 @@ class Framework:
             outputs = self.model.generate(
                 input_ids, do_sample=args.sampling, temperature=args.temperature,
                 num_beams=args.num_beams, top_p=args.top_p, top_k=args.top_k,
-                max_new_tokens=min(args.max_new_tokens, )
-            )
+                max_new_tokens=args.max_new_tokens )
             # for generation directly return the generated text
             output_text = self.tokenizer.decode(outputs[0][input_ids.size(1):], skip_special_tokens=True).strip()
+            print('output text: '+ output_text)
             return output_text
         else:
             with torch.inference_mode():
                 self.model.eval()
                 # get probablity distribution
+                print("Length of input_ids: ", len(input_ids))
+                
                 logits = self.model(input_ids=input_ids).logits
+
             labels = input_ids[0,1:]
             logits = logits[0, :-1]
             
@@ -247,7 +250,7 @@ class Framework:
             return selected_log_probs[-option_len:]
         
     
-    def one_step_pred(self, train_samples, eval_sample, verbose=False):
+    def one_step_pred(self, train_samples, eval_sample, verbose=True):
         """
         Return the prediction on the eval sample. In ICL, use train_samples as demonstrations
         """
@@ -265,12 +268,14 @@ class Framework:
         )
 
         # Calibration
+        '''
         if self.args.sfc or self.args.icl_sfc:
             sfc_encoded_candidates, sfc_option_lens = encode_prompt(self.task, self.task.get_template(), 
                 train_samples, eval_sample, self.tokenizer, max_length=self.args.max_length,
                 sfc=self.args.sfc, icl_sfc=self.args.icl_sfc, generation=self.task.generation, 
                 max_new_tokens=self.args.max_new_tokens
             )
+        '''
 
         outputs = []
         if self.task.generation:
@@ -290,26 +295,31 @@ class Framework:
                         logger.info("=== Candidate %d ===" % candidate_id)
                         logger.info(self.tokenizer.decode(encoded_candidate))
                     else:
-                        logger.info("=== Candidate %d (without context)===" % candidate_id)
-                        logger.info(self.tokenizer.decode(encoded_candidate).split(self.task.train_sep)[-1])
+                        print("=== Candidate %d (without context)===" % candidate_id)
+                        print(self.tokenizer.decode(encoded_candidate).split(self.task.train_sep)[-1])
                     logger.info(f"Log probabilities of the option tokens: {selected_log_probs}")
-
+                '''
                 if self.args.sfc or self.args.icl_sfc:
                     sfc_selected_log_probs = self.forward(sfc_encoded_candidates[candidate_id], option_len=sfc_option_lens[candidate_id])
                     if verbose:
                         logger.info("=== Candidate %d (without context) SFC ===" % candidate_id)
                         logger.info(self.tokenizer.decode(sfc_encoded_candidates[candidate_id]).split(self.task.train_sep)[-1])
                         logger.info(f"Log probabilities of the option tokens: {sfc_selected_log_probs}")
+                '''
+                #For now remove ICL and SFC options to make it easier
+                #outputs.append({"log_probs": selected_log_probs, "sfc_log_probs": sfc_selected_log_probs if self.args.sfc or self.args.icl_sfc else None})
+                outputs.append({"log_probs": selected_log_probs})
 
-                outputs.append({"log_probs": selected_log_probs, "sfc_log_probs": sfc_selected_log_probs if self.args.sfc or self.args.icl_sfc else None})
 
             if self.args.sfc or self.args.icl_sfc:
                 # Calibrated probabilities (surface form competition; https://arxiv.org/pdf/2104.08315.pdf)
                 # log p(candidate | input) = log p_lm(candidate | input) - log p_lm(candidate | sfc prompt)
+                print(outputs)
                 scores = [x['log_probs'].sum().item() - x['sfc_log_probs'].sum().item() for x in outputs]
             else:
                 # (Default) length-normalized log probabilities
                 # log p(candidate | input) = log p_lm(candidate | input) / |candidate #tokens|
+                print(outputs)
                 scores = [x['log_probs'].mean().item() for x in outputs]
 
             if verbose:
@@ -333,10 +343,15 @@ class Framework:
             logger.info(f"There are {len(eval_samples)} validation samples and one train set per eval sample")
         else:
             logger.info(f"There are {len(train_samples)} training samples and {len(eval_samples)} validation samples")
-
+        print("Evaluating...")
         # Prediction loop
         predictions = []  
         for eval_id, eval_sample in enumerate(tqdm(eval_samples)):
+            #print("Eval sample: "+ eval_sample)
+            #print("Train samples: "+ train_samples)
+            print("Eval id: "+ str(eval_id))
+
+            #rint("train sample:"+ train_samples[eval_id] if one_train_set_per_eval_sample else train_samples)
             predictions.append(
                 self.one_step_pred(train_samples[eval_id] if one_train_set_per_eval_sample else train_samples, eval_sample, verbose=(eval_id < 3))
             )
@@ -441,7 +456,7 @@ class Framework:
             last_checkpoint = self.args.resume_from_checkpoint
 
         trainer.train(resume_from_checkpoint=last_checkpoint) 
-
+        print('done training')
         # Explicitly save the model
         if self.args.save_model:
             logger.warn("Save model..")
