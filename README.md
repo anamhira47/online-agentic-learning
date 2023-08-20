@@ -98,7 +98,16 @@ agent.feedback(feedback)
 ```
 
 
+TODO AUG 16
 
+- Evaluate MIND2Web w/ seed data
+- Evaluate positive reinforcement style training
+- Evaluate generic multi choice dataset w/ online after building seed corpus
+AUG 17 onwards (other tasks todo)
+ - Setup observabilitiy
+ - Setup Live example of web agent w/candidate generation + inference
+ - Setup multi agent w/critic to decentralize learning
+ 
 
 
 # Building on the shoulders of giants :)
