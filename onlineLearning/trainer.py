@@ -726,9 +726,11 @@ class OurTrainer(Trainer):
             inputs = self._prepare_inputs(inputs)
             with self.compute_loss_context_manager():
                 loss = self.compute_loss(model, inputs)
+                print(loss)
             if self.args.n_gpu > 1:
                 # Warning: this is copied from the original Huggingface Trainer. Untested.
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
+                
         return loss.detach()
 
 
