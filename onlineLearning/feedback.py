@@ -58,7 +58,7 @@ class OurArguments(TrainingArguments):
     train_as_classification: bool = False # take the log likelihood of all options and train as classification 
 
     # MeZO random perturbation epsilon
-    zo_eps: float = 1e-3 # eps in MeZO
+    zo_eps: float = 1e-5 # eps in MeZO
 
     # Prefix tuning
     prefix_tuning: bool = False # whether to use prefix tuning
@@ -104,14 +104,14 @@ class OurArguments(TrainingArguments):
     output_dir: str = "result" # output directory
 
     # extra 
-    learning_rate: float = 1e-9
+    learning_rate: float = 1e-12
     lr_scheduler_type: str = "constant"
     
     save_total_limit: int = 1
     train_as_classification: bool = True
     # steps
-    max_steps: int = 10
-    eval_steps: int = 10 
+    max_steps: int = 1
+    eval_steps: int = 1
 
 
 
