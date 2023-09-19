@@ -30,11 +30,11 @@ class OurArguments(TrainingArguments):
     task_name: str = "SST2" # task name should match the string before Dataset in the Dataset class name. We support the following task_name: SST2, RTE, CB, BoolQ, WSC, WIC, MultiRC, Copa, ReCoRD, SQuAD, DROP
 
     # Number of examples
-    num_train: int = 0 # ICL mode: number of demonstrations; training mode: number of training samples
-    num_dev: int = None # (only enabled with training) number of development samples
-    num_eval: int = None # number of evaluation samples
-    num_train_sets: int = None # how many sets of training samples/demos to sample; if None and train_set_seed is None, then we will sample one set for each evaluation sample
-    train_set_seed: int = None # designated seed to sample training samples/demos
+    num_train: int = 50 # ICL mode: number of demonstrations; training mode: number of training samples
+    num_dev: int = 10 # (only enabled with training) number of development samples
+    num_eval: int = 10 # number of evaluation samples
+    num_train_sets: int = 2 # how many sets of training samples/demos to sample; if None and train_set_seed is None, then we will sample one set for each evaluation sample
+    train_set_seed: int = 42 # designated seed to sample training samples/demos
     result_file: str = None # file name for saving performance; if None, then use the task name, model name, and config
 
     # Model loading
@@ -50,7 +50,8 @@ class OurArguments(TrainingArguments):
     icl_sfc: bool = False # whether to use SFC calibration for ICL samples
 
     # Training
-    trainer: str = "none" 
+    trainer: str = "zo" 
+    output_dir: str = "output"
     ## options
     ## - none: no training -- for zero-shot or in-context learning (ICL)
     ## - regular: regular huggingface trainer -- for fine-tuning
@@ -66,12 +67,13 @@ class OurArguments(TrainingArguments):
     num_prefix: int = 5 # number of prefixes to use
     no_reparam: bool = True # do not use reparameterization trick
     prefix_init_by_real_act: bool = True # initialize prefix by real activations of random words
+    train_set_seed: int = 5000
 
     # LoRA
-    lora: bool = False # whether to use LoRA
+    lora: bool = True # whether to use LoRA
     lora_alpha: int = 16 # alpha in LoRA
     lora_r: int = 8 # r in LoRA
-
+    num_samples: int = 50
     # Generation
     sampling: bool = False # whether to use sampling
     temperature: float = 1.0 # temperature for generation
