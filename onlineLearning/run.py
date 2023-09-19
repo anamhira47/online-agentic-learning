@@ -27,10 +27,10 @@ import random
 @dataclass
 class OurArguments(TrainingArguments):
     # dataset and sampling strategy
-    task_name: str = "SST2" # task name should match the string before Dataset in the Dataset class name. We support the following task_name: SST2, RTE, CB, BoolQ, WSC, WIC, MultiRC, Copa, ReCoRD, SQuAD, DROP
+    task_name: str = "BoolQ" # task name should match the string before Dataset in the Dataset class name. We support the following task_name: SST2, RTE, CB, BoolQ, WSC, WIC, MultiRC, Copa, ReCoRD, SQuAD, DROP
 
     # Number of examples
-    num_train: int = 50 # ICL mode: number of demonstrations; training mode: number of training samples
+    num_train: int = 1000 # ICL mode: number of demonstrations; training mode: number of training samples
     num_dev: int = 10 # (only enabled with training) number of development samples
     num_eval: int = 10 # number of evaluation samples
     num_train_sets: int = 2 # how many sets of training samples/demos to sample; if None and train_set_seed is None, then we will sample one set for each evaluation sample
