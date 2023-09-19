@@ -54,9 +54,10 @@ tk
 tokenizers
 torch
 tqdm>=4.65.0
-transformers
+transformers==4.28.1
 typing-extensions>=4.7.1
 tzdata>=2023c
 urllib3>=2.0.4
 wheel>=0.38.4
 #zlib
+datasets
