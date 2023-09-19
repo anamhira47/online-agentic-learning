@@ -37,7 +37,7 @@ class OurArguments(TrainingArguments):
 
     # Model loading
     per_device_train_batch_size: int = 1 # batch size per device for training
-    model_name: str = "meta-llama/Llama-2-7b-hf" # HuggingFace model name
+    model_name: str = "facebook/opt-125m" # HuggingFace model name
     load_float16: bool = True # load model parameters as float16
     load_bfloat16: bool = False # load model parameters as bfloat16
     load_int8: bool = False # load model parameters as int8

@@ -13,7 +13,7 @@ import numpy as np
 import logging
 from sklearn.model_selection import train_test_split
 
-from mind2webloader import get_data_split, TextMultiChoiceDataset
+# from mind2webloader import get_data_split, TextMultiChoiceDataset
 import pickle
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
