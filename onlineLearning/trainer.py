@@ -15,6 +15,7 @@
 """
 The Trainer class, to easily train a 🤗 Transformers from scratch or finetune it on a new task.
 """
+import wandb
 
 import contextlib
 import functools
@@ -308,8 +309,11 @@ class OurTrainer(Trainer):
         if has_length(train_dataloader):
             len_dataloader = len(train_dataloader)
             num_update_steps_per_epoch = len_dataloader // args.gradient_accumulation_steps
+            logger.info('Gradient accumulation steps: %d', args.gradient_accumulation_steps)
+
             num_update_steps_per_epoch = max(num_update_steps_per_epoch, 1)
             num_examples = self.num_examples(train_dataloader)
+            logger.info('Number of examples: %d', num_examples)
             if args.max_steps > 0:
                 max_steps = args.max_steps
                 num_train_epochs = args.max_steps // num_update_steps_per_epoch + int(
@@ -480,6 +484,7 @@ class OurTrainer(Trainer):
                     _ = list(train_dataloader.sampler)
 
         for epoch in range(epochs_trained, num_train_epochs):
+
             if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
                 train_dataloader.sampler.set_epoch(epoch)
             elif hasattr(train_dataloader, "dataset") and isinstance(train_dataloader.dataset, IterableDatasetShard):
@@ -507,6 +512,7 @@ class OurTrainer(Trainer):
 
             step = -1
             for step, inputs in enumerate(epoch_iterator):
+                self.evaluate()
 
                 # Skip past any already trained steps if resuming training
                 if steps_trained_in_current_epoch > 0:
@@ -526,6 +532,9 @@ class OurTrainer(Trainer):
                 # MeZO added: estimate gradient
                 if args.trainer == "zo":
                     tr_loss_step = self.zo_step(model, inputs)
+                    #print(f"Estimated Loss: {tr_loss_step.item()}")
+                    #logger.info(f"Estimated Loss: {tr_loss_step.item()}")
+                    
                 else:
                     if (
                         ((step + 1) % args.gradient_accumulation_steps != 0)
@@ -562,6 +571,7 @@ class OurTrainer(Trainer):
                     # MeZO added: update model with the estimated gradient
                     if args.trainer == "zo":
                         self.zo_update(model)
+                        logger.info("Updated model with estimated gradient")
                     else:
                         # Gradient clipping
                         if args.max_grad_norm is not None and args.max_grad_norm > 0 and not self.deepspeed:
@@ -721,10 +731,12 @@ class OurTrainer(Trainer):
             return self.zo_forward_nondiff(model, inputs)
 
         with torch.inference_mode():
-            inputs = self._prepare_inputs(inputs)
+            #inputs = self._prepare_inputs(inputs)
+            #inputs["input_ids"] = inputs["input_ids"].squeeze(0)
+            # print(inputs)
             with self.compute_loss_context_manager():
                 loss = self.compute_loss(model, inputs)
-                print(loss)
+                #print(loss)
             if self.args.n_gpu > 1:
                 # Warning: this is copied from the original Huggingface Trainer. Untested.
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
@@ -760,7 +772,7 @@ class OurTrainer(Trainer):
         Estimate gradient by MeZO. Return the loss from f(theta + z)
         """
         args = self.args
-
+        #print(inputs)
         # What parameters to optimize 
         self.named_parameters_to_optim = []
         for name, param in model.named_parameters():
@@ -779,7 +791,7 @@ class OurTrainer(Trainer):
         loss2 = self.zo_forward(model, inputs)
 
         self.projected_grad = ((loss1 - loss2) / (2 * self.args.zo_eps)).item()
-
+        wandb.log({"projected_grad": self.projected_grad})
         # No gradient accumulation support
         assert self.args.gradient_accumulation_steps == 1
 

@@ -135,7 +135,6 @@ class Mind2WebTemplate(Template):
     def verbalize_sfc(self, sample, candidate):
         return f"{candidate}"
 
-
 class WICTemplate(Template):
     # From PromptSource 1
     verbalizer = {0: "No", 1: "Yes"}
@@ -329,7 +328,7 @@ class RTETemplate(Template):
         premise = sample.data['premise']
         hypothesis = sample.data['hypothesis']
         return f"{premise}\nDoes this mean that \"{hypothesis}\" is true? Yes or No?\n"
-
+ 
     def verbalize(self, sample, candidate):
         premise = sample.data['premise']
         hypothesis = sample.data['hypothesis']
