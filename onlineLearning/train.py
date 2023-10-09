@@ -19,7 +19,8 @@ import wandb
 import logging
 logging.basicConfig(level=logging.INFO)
 import logging
-
+import torch
+from torch import device as torch_device
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 @dataclass
@@ -51,6 +52,8 @@ class DataCollatorForMultipleChoice:
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors="pt",
         )
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        batch = {k: v.to(device) for k, v in batch.items()}
 
         batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
         batch["labels"] = torch.tensor(labels, dtype=torch.int64)
@@ -89,16 +92,16 @@ class OurArguments(TrainingArguments):
     task_name: str = "Mind2Web" # task name should match the string before Dataset in the Dataset class name. We support the following task_name: SST2, RTE, CB, BoolQ, WSC, WIC, MultiRC, Copa, ReCoRD, SQuAD, DROP
     mode: str = "train" # train, eval, test, or interactive
     # Number of examples
-    num_train: int = 5 # ICL mode: number of demonstrations; training mode: number of training samples
-    num_dev: int = 1000 # (only enabled with training) number of development samples
-    num_eval: int = 100 # number of evaluation samples
-    num_train_sets: int = 1 # how many sets of training samples/demos to sample; if None and train_set_seed is None, then we will sample one set for each evaluation sample
-    train_set_seed: int = 42 # designated seed to sample training samples/demos
+    #num_train: int = 1000 # ICL mode: number of demonstrations; training mode: number of training samples
+    #num_dev: int = 1000 # (only enabled with training) number of development samples
+    #num_eval: int = 100 # number of evaluation samples
+    # num_train_sets: int = 1 # how many sets of training samples/demos to sample; if None and train_set_seed is None, then we will sample one set for each evaluation sample
+    #train_set_seed: int = 42 # designated seed to sample training samples/demos
     result_file: str = None # file name for saving performance; if None, then use the task name, model name, and config
     # num epochos
-    num_train_epochs: int = 2 # number of training epochs
+    num_train_epochs: int = 30 # number of training epochs
     # Model loading
-    per_device_train_batch_size: int = 2 # batch size per device for training
+    per_device_train_batch_size: int = 100 # batch size per device for training
     # model_name: str = "facebook/opt-125m" # HuggingFace model name
     load_float16: bool = True # load model parameters as float16
     load_bfloat16: bool = False # load model parameters as bfloat16
@@ -107,11 +110,12 @@ class OurArguments(TrainingArguments):
     no_auto_device: bool = False # do not load model by auto device; should turn this on when using FSDP
 
     # Calibration
-    sfc: bool = False # whether to use SFC calibration
-    icl_sfc: bool = False # whether to use SFC calibration for ICL samples
-    tag: str = "online" # tag for saving the calibration file
+    #sfc: bool = False # whether to use SFC calibration
+    #icl_sfc: bool = False # whether to use SFC calibration for ICL samples
+    #tag: str = "online" # tag for saving the calibration file
     # Training
-    trainer: str = "regular" 
+    trainer: str = "zo" 
+    # device: torch_device = torch_device('cuda' if torch.cuda.is_available() else 'cpu')
     ## options
     ## - none: no training -- for zero-shot or in-context learning (ICL)
     ## - regular: regular huggingface trainer -- for fine-tuning
@@ -121,7 +125,7 @@ class OurArguments(TrainingArguments):
     train_as_classification: bool = False # take the log likelihood of all options and train as classification 
 
     # MeZO random perturbation epsilon
-    zo_eps: float = 1e-1 # eps in MeZO
+    zo_eps: float = 1e-3 # eps in MeZO
 
     # Prefix tuning
     prefix_tuning: bool = False # whether to use prefix tuning
@@ -165,24 +169,25 @@ class OurArguments(TrainingArguments):
     # Auto saving when interrupted
     save_on_interrupt: bool = False # save model when interrupted (useful for long training)
     output_dir: str = "result" # output directory
-
-    # extra 
-    learning_rate: float = 1e-2
+    # extra
+    learning_rate: float = 1e-7
     lr_scheduler_type: str = "constant"
     
     save_total_limit: int = 1
     train_as_classification: bool = True
     # steps
-    max_steps: int = 10
-    num_epochs: int = 1
+    #max_steps: int = 100
+    #num_epochs: int = 1
     eval_steps: int = 5
+    eval_strategy: str = 'epoch'
     # Loggging
     logging_dir: str = "logs"
     logging_steps: int = 10
     report_to: str = "wandb"
     # gradient accumulation
     gradient_accumulation_steps: int = 1
-model_name = 'roberta-base'
+    weight_decay: float = 0.1
+model_name = 'bert-large-uncased'
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 tokenizer.padding_side = "left"
 def compute_metrics(eval_predictions):
@@ -191,27 +196,31 @@ def compute_metrics(eval_predictions):
     return {"acc": (preds == label_ids).astype(np.float32).mean().item()}
 def preprocess_function(examples):
     ending_names = ["ending0", "ending1", "ending2", "ending3"]
+    # Repeat each first sentence four times to go with the four possibilities of second sentences.
     first_sentences = [[context] * 4 for context in examples["sent1"]]
-    #print(examples["sent1"])
-    #print(first_sentences)
+    # Grab all second sentences possible for each context.
     question_headers = examples["sent2"]
-    #print(question_headers)
-    second_sentences = [
-        [f"{header} {examples[end][i]}" for end in ending_names] for i, header in enumerate(question_headers)
-    ]
-    #print(second_sentences)
+    second_sentences = [[f"{header} {examples[end][i]}" for end in ending_names] for i, header in enumerate(question_headers)]
+    
+    # Flatten everything
     first_sentences = sum(first_sentences, [])
     second_sentences = sum(second_sentences, [])
-    #print(first_sentences)
-    #print(second_sentences)
+    
+    # Tokenize
     tokenized_examples = tokenizer(first_sentences, second_sentences, truncation=True)
-    return {k: [v[i : i + 4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
-
+    # Un-flatten
+    return {k: [v[i:i+4] for i in range(0, len(v), 4)] for k, v in tokenized_examples.items()}
 
 def main():
     global tokenizer
     if 'roberta' in model_name:
         model = AutoModelForMultipleChoice.from_pretrained(model_name)
+        if torch.cuda.is_available():
+            model = model.to('cuda')
+    elif 'bert' in model_name:
+        model = AutoModelForMultipleChoice.from_pretrained(model_name)
+        if torch.cuda.is_available():
+            model = model.to('cuda')
     elif 'opt' in model_name:
         # Need to implement OPt multiple choice model
         pass
@@ -227,8 +236,9 @@ def main():
         tokenizer.add_special_tokens({'pad_token': '[PAD]'})
         model.resize_token_embeddings(len(tokenizer))
     swag = load_dataset("swag", "regular")
-    swag['train'] = swag['train'].select(range(10))
-    swag['validation'] = swag['validation'].select(range(10))
+    swag.set_format("torch", device="cuda")
+    swag['train'] = swag['train'].select(range(1000))
+    swag['validation'] = swag['validation'].select(range(1000))
     tokenizer = AutoTokenizer.from_pretrained(model_name)  # replace with your model's tokenizer
    
         # Return the processed data as a dictionary
@@ -253,6 +263,7 @@ def main():
             tokenizer=tokenizer,
             data_collator=DataCollatorForMultipleChoice(tokenizer),
             compute_metrics=compute_metrics,
+
         )
     
     trainer.train()

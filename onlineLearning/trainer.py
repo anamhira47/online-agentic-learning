@@ -531,10 +531,11 @@ class OurTrainer(Trainer):
 
                 # MeZO added: estimate gradient
                 if args.trainer == "zo":
+                    inputs = self._prepare_inputs(inputs)
                     tr_loss_step = self.zo_step(model, inputs)
                     #print(f"Estimated Loss: {tr_loss_step.item()}")
                     #logger.info(f"Estimated Loss: {tr_loss_step.item()}")
-                    
+                    wandb.log({'tr-loss': tr_loss_step.item()})
                 else:
                     if (
                         ((step + 1) % args.gradient_accumulation_steps != 0)
@@ -571,7 +572,9 @@ class OurTrainer(Trainer):
                     # MeZO added: update model with the estimated gradient
                     if args.trainer == "zo":
                         self.zo_update(model)
+                        #print("Updating model")
                         logger.info("Updated model with estimated gradient")
+                        
                     else:
                         # Gradient clipping
                         if args.max_grad_norm is not None and args.max_grad_norm > 0 and not self.deepspeed:
@@ -680,6 +683,7 @@ class OurTrainer(Trainer):
         self.store_flos()
         metrics["total_flos"] = self.state.total_flos
         metrics["train_loss"] = train_loss
+        wandb.log({"train_loss": train_loss})
 
         self.is_in_train = False
 
@@ -734,7 +738,10 @@ class OurTrainer(Trainer):
             #inputs = self._prepare_inputs(inputs)
             #inputs["input_ids"] = inputs["input_ids"].squeeze(0)
             # print(inputs)
+            # inputs = inputs.to(self.args.device)
+            # targets = targets.to(self.args.device)
             with self.compute_loss_context_manager():
+
                 loss = self.compute_loss(model, inputs)
                 #print(loss)
             if self.args.n_gpu > 1:
@@ -785,11 +792,11 @@ class OurTrainer(Trainer):
         # First function evaluation
         self.zo_perturb_parameters(scaling_factor=1)
         loss1 = self.zo_forward(model, inputs)
-
+        wandb.log({"loss1": loss1.item()})
         # Second function evaluation
         self.zo_perturb_parameters(scaling_factor=-2)
         loss2 = self.zo_forward(model, inputs)
-
+        wandb.log({"loss2": loss2.item()})
         self.projected_grad = ((loss1 - loss2) / (2 * self.args.zo_eps)).item()
         wandb.log({"projected_grad": self.projected_grad})
         # No gradient accumulation support
@@ -809,15 +816,14 @@ class OurTrainer(Trainer):
 
         # Reset the random seed for sampling zs
         torch.manual_seed(self.zo_random_seed)     
-
+        
         for name, param in self.named_parameters_to_optim:
             # Resample z
             z = torch.normal(mean=0, std=1, size=param.data.size(), device=param.data.device, dtype=param.data.dtype)
             if "bias" not in name and "layer_norm" not in name and "layernorm" not in name:
                 param.data = param.data - self._get_learning_rate() * (self.projected_grad * z + args.weight_decay * param.data)
             else:
-                param.data = param.data - self._get_learning_rate() * (self.projected_grad * z)
-
+                param.data = param.data - self._get_learning_rate() * (self.projected_grad * z)   
         self.lr_scheduler.step()
 
 
